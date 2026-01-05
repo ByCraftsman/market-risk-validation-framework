@@ -171,7 +171,7 @@ pdf_z = norm.pdf(z)
 para_ES = (
     portfolio_value
     * portfolio_std_dev
-    * (pdf_z / (1 - confidence_level))
+    * (pdf_z / (1 - confidence_level)) # Tail conditional expectation term
     * np.sqrt(return_window)
 )
 
@@ -181,6 +181,7 @@ mc_ES = -scenario_pnl[scenario_pnl <= -mc_var].mean()
 ES_summary = pd.DataFrame({
     "ES": [his_ES, para_ES, mc_ES]
 }, index=["Historical", "Parametric", "Monte Carlo"])
+
 
 
 
