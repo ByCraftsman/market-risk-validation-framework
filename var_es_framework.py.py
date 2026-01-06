@@ -55,9 +55,6 @@ historical_returns = (log_returns * weights).sum(axis = 1)
 #5-day holding period VaR. Mean return is assumed to be zero. (짧은 기간은 보통 mean return을 0으로 가정.)
 return_window = 5
 
-#Rolling sums of log returns represent cumulative multi-period returns.
-his_range_returns = historical_returns.rolling(window=return_window).sum().dropna()
-
 #0.99를 쓴 이유는 Tail Risk때문에 보수적인 수치를 요구하기 때문임.
 confidence_level = 0.99 
 
@@ -65,7 +62,11 @@ confidence_level = 0.99
 
 
 #Historical VaR Method 
-#이 방법은 데이터를 그대로 사용하기 때문에 moments (적률) 와 correlation이 데이터에 모두 반영되는 특징이 있다.
+#이 방법은 데이터를 그대로 사용하기 때문에, moments (적률) 와 correlation이 데이터에 모두 반영되는 특징이 있다.
+
+#Rolling sums of log returns represent cumulative multi-period returns.
+his_range_returns = historical_returns.rolling(window=return_window).sum().dropna()
+
 alpha = 1 - confidence_level
 range_returns_dollar = his_range_returns * portfolio_value
 his_VaR = -np.percentile(range_returns_dollar, alpha * 100)
@@ -181,6 +182,7 @@ mc_ES = -scenario_pnl[scenario_pnl <= -mc_var].mean()
 ES_summary = pd.DataFrame({
     "ES": [his_ES, para_ES, mc_ES]
 }, index=["Historical", "Parametric", "Monte Carlo"])
+
 
 
 
