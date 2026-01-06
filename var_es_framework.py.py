@@ -52,7 +52,7 @@ weights = np.array([1/len(tickers)]*len(tickers)) #0.25*4
 #로그 수익률 서메이션. This equation has implicit daily rebalancing.
 historical_returns = (log_returns * weights).sum(axis = 1)
 
-#5-day holding period VaR. Mean return is assumed to be zero. (5일 정도면 짧아면 괜찮다.)
+#5-day holding period VaR. Mean return is assumed to be zero. (짧은 기간은 보통 mean return을 0으로 가정.)
 return_window = 5
 
 #Rolling sums of log returns represent cumulative multi-period returns.
@@ -181,6 +181,7 @@ mc_ES = -scenario_pnl[scenario_pnl <= -mc_var].mean()
 ES_summary = pd.DataFrame({
     "ES": [his_ES, para_ES, mc_ES]
 }, index=["Historical", "Parametric", "Monte Carlo"])
+
 
 
 
