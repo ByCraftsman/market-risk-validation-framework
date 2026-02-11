@@ -25,7 +25,6 @@ tickers = [
     '^GSPC'       # S&P 500 
 ]
 
-# Download
 adj_close_df = pd.DataFrame()
 
 for ticker in tickers:
@@ -182,6 +181,7 @@ mc_ES = -scenario_pnl[scenario_pnl <= -mc_var].mean()
 ES_summary = pd.DataFrame({
     "ES": [his_ES, para_ES, mc_ES]
 }, index=["Historical", "Parametric", "Monte Carlo"])
+
 
 
 
