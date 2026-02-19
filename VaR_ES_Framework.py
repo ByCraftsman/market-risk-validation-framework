@@ -1,13 +1,4 @@
-#Due to time constraints, this project currently implements VaR and ES calculations only.
-#Further extensions are planned within March.
-
-"""
-For Indices, 'Close' is used as they don't have dividends or splits.
-For ETFs, 'Adj Close' is used to account for corporate actions.
-
-지수는 배당이나 분할 개념이 없기 때문에 Close 가격이 수정 가격과 동일합니다.
-따라서 지수는 Close를, ETF는 Adj Close을 사용했습니다.
-"""
+# Work in progress: VaR/ES risk framework under active development
 
 import numpy as np
 import pandas as pd
@@ -31,6 +22,12 @@ def fetch_prices(tickers, start_date, end_date):
 
     for ticker in tickers:
         data = yf.download(ticker, start=start_date, end=end_date)
+
+        """
+        For Indices, 'Close' is used as they don't have dividends or splits.
+        For ETFs, 'Adj Close' is used to account for corporate actions.
+        """
+
         df[ticker] = data['Adj Close'] if 'Adj Close' in data else data['Close']
 
     return df.dropna()
@@ -50,8 +47,6 @@ log_returns = compute_log_returns(prices)
 
 #We assume Equal-weighted Portfolio
 weights = np.array([1/len(tickers)]*len(tickers)) #0.25 * 4
-
-
 def compute_portfolio_returns(log_returns, weights):
     
     return (log_returns * weights).sum(axis=1)
@@ -212,6 +207,19 @@ VaR_summary = pd.DataFrame({
 """
 Expected Shortfall (ES) measures the average loss beyond VaR.
 
+    Definition:
+    
+        ES_α = -E[X | X ≤ -VaR_α]
+
+    For normal distribution:
+   
+        ES = V * σ * φ(z_α) / (1 - α) * sqrt(h)
+
+where:
+- φ(z): standard normal PDF
+- z_α: quantile at confidence level α
+
+
 While VaR answers:
    "What loss level will not be exceeded with X% confidence?"
 
@@ -242,21 +250,44 @@ ES_summary = pd.DataFrame({
 
 
 
+#backtesting.
+def kupiec_test(var, pnl=rolling_pnl, confidence=0.99):
+    violations = pnl < -var
+    x = violations.sum()
+    n = len(pnl)
+    p = 1 - confidence
+
+    likelihood_ratio = -2 * (
+        (n-x)*np.log(1-p) + x*np.log(p)
+        - ((n-x)*np.log(1-x/n) + x*np.log(x/n))
+    )
+    return likelihood_ratio, x
 
 
+his_likelihood_ratio, his_x = kupiec_test(historical_VaR)
+para_likelihood_ratio, para_x = kupiec_test(parametric_VaR) 
+mc_likelihood_ratio, mc_x = kupiec_test(monte_carlo_VaR)
 
+kupiec_test_results = pd.DataFrame({
+    "Method": ["Historical VaR", "Parametric VaR", "Monte Carlo VaR"],
+    "LR Statistic": [his_likelihood_ratio, para_likelihood_ratio, mc_likelihood_ratio],
+    "Violations (x)": [his_x, para_x, mc_x],
+})
 
+print(kupiec_test_results)
 
+"""
+Backtesting insight:
 
+Historical VaR shows violation frequency consistent with the expected 1% level,
+indicating that empirical distributions capture tail risk reasonably well.
 
+Parametric and Monte Carlo VaR (both assuming normality) exhibit excessive
+violations (~2.48%), demonstrating that normal distribution assumptions
+underestimate fat tails and extreme losses in financial markets.
 
-
-
-
-
-
-
-
+This result highlights a well-known limitation of normal-based VaR models.
+"""
 
 
 
