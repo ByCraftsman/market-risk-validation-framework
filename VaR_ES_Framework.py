@@ -56,7 +56,7 @@ portfolio_returns = compute_portfolio_returns(log_returns, weights)
 
 
 
-#Historical VaR Method 
+#-----Historical VaR Method-----
 
 """
 Rolling sums of log returns represent cumulative multi-period returns.
@@ -87,7 +87,7 @@ print(historical_VaR)
 
 
 
-#VaR Parametric Method
+#-----VaR Parametric Method-----
 from scipy.stats import norm
 
 def compute_parametric_VaR(log_returns, weights, value=1000000, horizon=5, confidence=0.99):
@@ -111,7 +111,7 @@ print(parametric_VaR)
 
 
 
-#VaR Monte Carlo Method
+#-----VaR Monte Carlo Method-----
 
 """
 When returns are assumed to be multivariate normal:
@@ -158,7 +158,7 @@ print(monte_carlo_VaR)
 
 
 
-#VaR Distribution Plots
+#-----VaR Distribution Plots-----
 def plot_var_distribution(data, var_value, title, xlim=None, ylim=None): # Optional axis limits allow consistent scaling across plots when needed.
     plt.figure()
     plt.hist(data, bins=200, density=True)
@@ -189,8 +189,6 @@ plot_var_distribution(rolling_pnl, parametric_VaR, 'Parametric VaR', x_limits)
 plot_var_distribution(scenario_pnl, monte_carlo_VaR, 'Monte Carlo VaR', x_limits)
 
 
-
-
 #VaR Summary
 VaR_summary = pd.DataFrame({
     "VaR": [historical_VaR, parametric_VaR, monte_carlo_VaR]
@@ -199,7 +197,7 @@ VaR_summary = pd.DataFrame({
 
 
 
-#Expected Shortfall
+#-----Expected Shortfall-----
 
 """
 Expected Shortfall (ES) measures the average loss beyond VaR.
@@ -239,6 +237,7 @@ para_ES = (
 
 mc_ES = -scenario_pnl[scenario_pnl <= -monte_carlo_VaR].mean()
 
+
 #ES Summary
 ES_summary = pd.DataFrame({
     "ES": [his_ES, para_ES, mc_ES]
@@ -247,7 +246,7 @@ ES_summary = pd.DataFrame({
 
 
 
-#Backtesting     
+#-----Backtesting-----
 """
 Backtesting methodologies for Value-at-Risk (VaR) models are generally grouped into
 three categories:
@@ -343,6 +342,8 @@ which is the core objective of market risk regulation.
 
 
 
+
+#-----Kupiec Unconditional Coverage Test-----
 """
 Proportion of failure Likelihood Ratio (LR) Test
 
@@ -401,6 +402,7 @@ This result highlights a well-known limitation of normal-based VaR models.
 
 
 
+#-----Christoffersen Independence Test-----
 """
 Christoffersen Independence Likelihood Ratio (LR) Test
 
@@ -482,7 +484,6 @@ print(his_trans)
 print(para_trans)
 print(mc_trans)
 
-
 """
 Backtesting insight:
 
@@ -496,7 +497,9 @@ during periods of market stress.
 """
 
 
-#Christoffersen Conditional Coverage test
+
+
+#-----Christoffersen Conditional Coverage test-----
 def conditional_coverage_test(lr_uc, lr_ind):
     return lr_uc + lr_ind
 
@@ -514,6 +517,8 @@ CCI_results = pd.DataFrame({
 })
 
 """
+Backtesting insight:
+
 [Historical VaR]
 
 Finding: 
@@ -542,15 +547,6 @@ dynamics and reduce violation clustering.
 
 This result is consistent with well-documented volatility clustering in financial markets.
 """
-
-
-
-
-
-
-
-
-
 
 
 
