@@ -121,6 +121,7 @@ When returns are assumed to be multivariate normal:
 because both rely on the same distributional assumption.
 
 Differences arise when:
+    
     • non-normal distributions are used
     • stochastic volatility is introduced
     • fat tails or skewness are modeled
@@ -157,7 +158,7 @@ print(monte_carlo_VaR)
 
 
 
-#Visualization
+#VaR Distribution Plots
 def plot_var_distribution(data, var_value, title, xlim=None, ylim=None): # Optional axis limits allow consistent scaling across plots when needed.
     plt.figure()
     plt.hist(data, bins=200, density=True)
@@ -176,10 +177,6 @@ x_limits = (
     min(rolling_pnl.min(), scenario_pnl.min()),
     max(rolling_pnl.max(), scenario_pnl.max())
 )
-
-print(historical_VaR)
-print(parametric_VaR)
-print(monte_carlo_VaR)
 
 """
 The Monte Carlo distribution appears narrower than the historical distribution.
@@ -250,7 +247,118 @@ ES_summary = pd.DataFrame({
 
 
 
-#backtesting.
+#Backtesting     
+"""
+Backtesting methodologies for Value-at-Risk (VaR) models are generally grouped into
+three categories:
+
+1. Coverage Tests
+   Coverage tests evaluate whether the observed frequency of VaR exceedances
+   matches the expected rate implied by the confidence level.
+
+   Example:
+   - Kupiec Unconditional Coverage Test
+
+   Purpose:
+   Ensures the model produces the correct proportion of tail losses.
+
+   Limitation:
+   Does not detect clustering of violations.
+
+
+2. Independence Tests
+   Independence tests assess whether VaR violations occur independently over time.
+
+   Example:
+   - Christoffersen Independence Test
+
+   Why is this necessary?
+
+   A model may produce the correct violation frequency but still be inadequate if
+   violations cluster during periods of market stress. Clustering indicates that
+   the model fails to capture volatility dynamics (e.g., volatility clustering).
+
+   Kupiec test only answers:
+       "Is the violation rate correct?"
+
+   Independence test answers:
+       "Are violations randomly distributed over time?"
+
+   Detecting clustering is crucial because persistent violations imply that risk
+   is systematically underestimated during turbulent periods.
+
+
+3. Conditional Coverage Tests
+   Conditional coverage tests jointly evaluate both correct coverage and independence.
+
+   Example:
+   - Christoffersen Conditional Coverage Test
+
+   Why use conditional coverage?
+
+   A robust VaR model must satisfy BOTH:
+       
+   • Correct exceedance frequency
+   • Independence of violations
+
+   Conditional coverage provides a comprehensive assessment by combining both criteria.
+
+
+4. Distribution Tests (Not implemented here)
+
+   Distribution tests evaluate whether the entire forecast loss distribution
+   matches the realized loss distribution.
+
+   Examples:
+   - Berkowitz test
+   - Kolmogorov–Smirnov test
+   - Anderson–Darling test
+
+   Why are distribution tests not used here?
+
+   • They require full density forecasts, not just VaR quantiles.
+   • Regulatory frameworks (e.g., Basel) focus primarily on exceedance behavior.
+   • VaR is a quantile-based risk measure; therefore, exceedance tests are more
+     directly aligned with its objective.
+
+
+Regulatory Perspective (Basel Framework)
+
+The Basel Committee emphasizes exceedance-based backtesting because:
+
+• Capital requirements depend on tail loss quantiles (VaR/ES).
+• The primary regulatory concern is whether extreme losses are underestimated.
+• Coverage and independence directly assess model reliability in tail risk.
+• Distribution tests provide broader diagnostics but are not essential for
+  regulatory capital validation.
+
+In practice, regulators prioritize:
+    - Coverage (Kupiec)
+    - Independence (Christoffersen)
+    - Conditional Coverage
+
+These tests ensure that the model is reliable in estimating extreme losses,
+which is the core objective of market risk regulation.
+"""
+
+
+
+"""
+Proportion of failure Likelihood Ratio (LR) Test
+
+The POF Likelihood Ratio (LR) test statistic is defined as:
+
+    LR = -2 * ln[ ( (1-p)^(n-x) * p^x ) / ( (1-x/n)^(n-x) * (x/n)^x ) ]
+
+where:
+- n: total number of observations
+- x: number of violations (pnl < -VaR)
+- p: expected failure rate (1 - confidence level)
+
+Decision Rule: 
+    Reject H₀ if LR > 6.63 (at 99% confidence level, df=1)
+"""
+   
 def kupiec_test(var, pnl=rolling_pnl, confidence=0.99):
     violations = pnl < -var
     x = violations.sum()
@@ -267,6 +375,7 @@ def kupiec_test(var, pnl=rolling_pnl, confidence=0.99):
 his_likelihood_ratio, his_x = kupiec_test(historical_VaR)
 para_likelihood_ratio, para_x = kupiec_test(parametric_VaR) 
 mc_likelihood_ratio, mc_x = kupiec_test(monte_carlo_VaR)
+
 
 kupiec_test_results = pd.DataFrame({
     "Method": ["Historical VaR", "Parametric VaR", "Monte Carlo VaR"],
@@ -288,6 +397,162 @@ underestimate fat tails and extreme losses in financial markets.
 
 This result highlights a well-known limitation of normal-based VaR models.
 """
+
+
+
+
+"""
+Christoffersen Independence Likelihood Ratio (LR) Test
+
+The LR statistic for testing independence of VaR violations is defined as:
+
+LR_ind = -2 ln [
+    ((1 − π)^(n₀₀ + n₁₀) * π^(n₀₁ + n₁₁)) /
+    ((1 − π₀₁)^(n₀₀) * π₀₁^(n₀₁) * (1 − π₁₁)^(n₁₀) * π₁₁^(n₁₁))
+]
+
+Transition probabilities:
+
+π₀₁ = n₀₁ / (n₀₀ + n₀₁)     π₁₁ = n₁₁ / (n₁₀ + n₁₁)
+π   = (n₀₁ + n₁₁) / (n₀₀ + n₀₁ + n₁₀ + n₁₁)
+
+Transition counts:
+
+n₀₀ : no violation → no violation
+n₀₁ : no violation → violation
+n₁₀ : violation → no violation
+n₁₁ : violation → violation
+
+Hypotheses:
+
+H₀: π₀₁ = π₁₁ = π   (violations are independent over time)
+H₁: π₀₁ ≠ π₁₁       (violation clustering exists)
+
+Under H₀:
+LR_ind ~ χ²(1)
+
+Decision Rule:
+    Reject H₀ if LR_ind > 6.63  (at 99% confidence level, df = 1)
+"""
+
+def christoffersen_independence_test(var, pnl=rolling_pnl, confidence=0.99):
+    violations = (pnl < -var).astype(int)
+
+    # Transition counts
+    n00 = n01 = n10 = n11 = 0
+
+    for i in range(1, len(violations)): #첫 관측은 제외함.
+        prev = violations.iloc[i-1]
+        curr = violations.iloc[i]
+        if prev == 0 and curr == 0:
+            n00 += 1
+        elif prev == 0 and curr == 1:
+            n01 += 1
+        elif prev == 1 and curr == 0:
+            n10 += 1
+        elif prev == 1 and curr == 1:
+            n11 += 1
+
+    # Transition probabilities
+    pi01 = n01 / (n00 + n01) if (n00 + n01) > 0 else 0
+    pi11 = n11 / (n10 + n11) if (n10 + n11) > 0 else 0
+    pi = (n01 + n11) / (n00 + n01 + n10 + n11)
+
+    # Likelihood ratio
+    LR_ind = -2 * (
+        (n00 + n10)*np.log(1 - pi) + (n01 + n11)*np.log(pi)
+        - (n00*np.log(1 - pi01) + n01*np.log(pi01)
+           + n10*np.log(1 - pi11) + n11*np.log(pi11))
+    )
+
+    return LR_ind, (n00, n01, n10, n11)
+
+
+his_ind_lr, his_trans = christoffersen_independence_test(historical_VaR)
+para_ind_lr, para_trans = christoffersen_independence_test(parametric_VaR)
+mc_ind_lr, mc_trans = christoffersen_independence_test(monte_carlo_VaR)
+
+independence_results = pd.DataFrame({
+    "Method": ["Historical", "Parametric", "Monte Carlo"],
+    "LR Independence": [his_ind_lr, para_ind_lr, mc_ind_lr],
+})
+
+print(independence_results)
+print(his_trans)
+print(para_trans)
+print(mc_trans)
+
+
+"""
+Backtesting insight:
+
+The extremely large LR statistics from the Christoffersen independence test
+indicate strong violation clustering. This is consistent with well-known
+features of financial returns such as volatility clustering and regime shifts.
+
+The results suggest that static volatility assumptions (as in normal VaR)
+fail to capture time-varying risk, leading to concentrated exceedances
+during periods of market stress.
+"""
+
+
+#Christoffersen Conditional Coverage test
+def conditional_coverage_test(lr_uc, lr_ind):
+    return lr_uc + lr_ind
+
+his_CCI_test_result = conditional_coverage_test(his_likelihood_ratio, his_ind_lr)
+para_CCI_test_result = conditional_coverage_test(para_likelihood_ratio, para_ind_lr)
+mc_CCI_test_result = conditional_coverage_test(mc_likelihood_ratio, mc_ind_lr)
+
+CCI_results = pd.DataFrame({
+    "Method": ["Historical", "Parametric", "Monte Carlo"],
+    "LR_CC": [
+        his_CCI_test_result,
+        para_CCI_test_result,
+        mc_CCI_test_result
+    ]
+})
+
+"""
+[Historical VaR]
+
+Finding: 
+    
+    Passed UC (LR=0.0027~), but failed CC due to Ind (LR=224.95).
+
+    
+[Parametric & Monte Carlo VaR]
+
+Finding: 
+    
+    Failed both UC and Ind (LR_cc > 500).
+
+
+[Interpretation]
+
+From a regulatory and risk-management perspective, a high LR_cc statistic is a red flag,
+indicating that VaR violations are not only too frequent but also temporally clustered.
+
+This suggests that the model fails to capture time-varying volatility and regime shifts,
+leading to an underestimation of risk during periods of market stress.
+
+To address this issue, more advanced approaches such as GARCH-based volatility models
+or Filtered Historical Simulation (FHS) can be employed to better account for volatility
+dynamics and reduce violation clustering.
+
+This result is consistent with well-documented volatility clustering in financial markets.
+"""
+
+
+
+
+
+
+
+
+
+
+
 
 
 
