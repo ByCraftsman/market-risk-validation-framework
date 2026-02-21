@@ -178,15 +178,15 @@ x_limits = (
     max(rolling_pnl.max(), scenario_pnl.max())
 )
 
+plot_var_distribution(rolling_pnl, historical_VaR, 'Historical VaR', x_limits)
+plot_var_distribution(rolling_pnl, parametric_VaR, 'Parametric VaR', x_limits)
+plot_var_distribution(scenario_pnl, monte_carlo_VaR, 'Monte Carlo VaR', x_limits)
+
 """
 The Monte Carlo distribution appears narrower than the historical distribution.
 This is expected because the simulation assumes a multivariate normal distribution,
 which does not capture fat tails observed in real market data. (i.e. underestimates fat tails)
 """
-
-plot_var_distribution(rolling_pnl, historical_VaR, 'Historical VaR', x_limits)
-plot_var_distribution(rolling_pnl, parametric_VaR, 'Parametric VaR', x_limits)
-plot_var_distribution(scenario_pnl, monte_carlo_VaR, 'Monte Carlo VaR', x_limits)
 
 
 #VaR Summary
@@ -516,6 +516,8 @@ CCI_results = pd.DataFrame({
     ]
 })
 
+print(CCI_results)
+
 """
 Backtesting insight:
 
@@ -523,7 +525,7 @@ Backtesting insight:
 
 Finding: 
     
-    Passed UC (LR=0.0027~), but failed CC due to Ind (LR=224.95).
+    Passed UC (LR=0.0027~), but failed CC due to Ind (LR=224.98).
 
     
 [Parametric & Monte Carlo VaR]
@@ -535,7 +537,7 @@ Finding:
 
 [Interpretation]
 
-From a regulatory and risk-management perspective, a high LR_cc statistic is a red flag,
+From a regulatory and risk-management perspective, a high LR_CC statistic is a red flag,
 indicating that VaR violations are not only too frequent but also temporally clustered.
 
 This suggests that the model fails to capture time-varying volatility and regime shifts,
