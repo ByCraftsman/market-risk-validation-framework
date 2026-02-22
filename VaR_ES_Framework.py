@@ -47,6 +47,7 @@ log_returns = compute_log_returns(prices)
 
 #We assume Equal-weighted Portfolio
 weights = np.array([1/len(tickers)]*len(tickers)) #0.25 * 4
+
 def compute_portfolio_returns(log_returns, weights):
     
     return (log_returns * weights).sum(axis=1)
@@ -106,27 +107,13 @@ def compute_parametric_VaR(log_returns, weights, value=1000000, horizon=5, confi
 
 parametric_VaR, portfolio_std = compute_parametric_VaR(log_returns, weights)
 
+print(portfolio_std)
 print(parametric_VaR)
 
 
 
 
 #-----VaR Monte Carlo Method-----
-
-"""
-When returns are assumed to be multivariate normal:
-
-    Parametric VaR  ≈  Monte Carlo VaR
-
-because both rely on the same distributional assumption.
-
-Differences arise when:
-    
-    • non-normal distributions are used
-    • stochastic volatility is introduced
-    • fat tails or skewness are modeled
-"""
-
 def compute_monte_carlo_var(log_returns, weights, value=1000000, horizon=5, confidence=0.99, simulations=10000):
     cov_matrix = log_returns.cov()
     num_assets = len(weights)
@@ -155,13 +142,65 @@ scenario_pnl, monte_carlo_VaR = compute_monte_carlo_var(log_returns, weights)
 
 print(monte_carlo_VaR)
 
+"""
+Monte Carlo VaR is similar to Parametric VaR.
+
+This similarity arises because when returns are assumed to follow a multivariate normal distribution,
+
+    Parametric VaR ≈ Monte Carlo VaR
+
+as both methods rely on the same distributional assumption.
+
+However, differences arise when:
+    
+    • non-normal distributions are used
+    • stochastic volatility is introduced
+    • fat tails or skewness are modeled
+"""
+
+
+
+
+#-----VaR Convergence Insight-----
+simulation_sizes = [500, 3000, 10000, 50000]
+results = []
+
+for n in simulation_sizes:
+    _, var_estimate = compute_monte_carlo_var(
+        log_returns, weights, simulations=n
+    )
+    results.append(var_estimate)
+
+mc_convergence = pd.DataFrame({
+    "Simulations": simulation_sizes,
+    "Monte Carlo VaR": results
+})
+
+print(mc_convergence)
+
+"""
+Monte Carlo VaR estimates stabilize as the number of simulations increases.
+The difference between 10,000 and 50,000 simulations is less than 1%,
+indicating that 10,000 simulations provide sufficient accuracy for practical risk measurement.
+
+This suggests that smaller simulation sizes may lead to unstable tail estimates,
+while larger samples improve the reliability of risk measurement.
+"""
+
 
 
 
 #-----VaR Distribution Plots-----
+def generate_parametric_pnl(std, value, horizon, simulations=10000):
+    simulated_returns = np.random.normal(0, std * np.sqrt(horizon), simulations) #Rₜ ∼ 𝒩(0, σ²T)
+    return simulated_returns * value
+
+parametric_pnl = generate_parametric_pnl(portfolio_std, 1000000, 5)
+
+
 def plot_var_distribution(data, var_value, title, xlim=None, ylim=None): # Optional axis limits allow consistent scaling across plots when needed.
     plt.figure()
-    plt.hist(data, bins=200, density=True)
+    plt.hist(data, bins=100, density=True)
     plt.axvline(-var_value, linestyle='dashed', linewidth=1, label='VaR')
     plt.xlabel('PnL')
     plt.ylabel('Density')
@@ -173,26 +212,28 @@ def plot_var_distribution(data, var_value, title, xlim=None, ylim=None): # Optio
     if ylim:
         plt.ylim(ylim)
 
-x_limits = (
-    min(rolling_pnl.min(), scenario_pnl.min()),
-    max(rolling_pnl.max(), scenario_pnl.max())
-)
+tail_xlim = (-80000, 80000)
 
-plot_var_distribution(rolling_pnl, historical_VaR, 'Historical VaR', x_limits)
-plot_var_distribution(rolling_pnl, parametric_VaR, 'Parametric VaR', x_limits)
-plot_var_distribution(scenario_pnl, monte_carlo_VaR, 'Monte Carlo VaR', x_limits)
+plot_var_distribution(rolling_pnl, historical_VaR, 'Historical VaR', tail_xlim)
+plot_var_distribution(parametric_pnl, parametric_VaR, 'Parametric VaR', tail_xlim)
+plot_var_distribution(scenario_pnl, monte_carlo_VaR, 'Monte Carlo VaR', tail_xlim)
 
 """
-The Monte Carlo distribution appears narrower than the historical distribution.
-This is expected because the simulation assumes a multivariate normal distribution,
-which does not capture fat tails observed in real market data. (i.e. underestimates fat tails)
+The parametric and Monte Carlo distributions appear narrower (lower standard deviation)
+than the historical distribution. This is expected because the simulations assume a
+multivariate normal distribution, which fails to capture the fat tails observed in
+real market data, potentially leading to an underestimation of tail risk.
 """
 
 
-#VaR Summary
+
+
+#-----VaR Summary-----
 VaR_summary = pd.DataFrame({
     "VaR": [historical_VaR, parametric_VaR, monte_carlo_VaR]
 }, index=["Historical", "Parametric", "Monte Carlo"])
+
+print(VaR_summary)
 
 
 
@@ -242,6 +283,8 @@ mc_ES = -scenario_pnl[scenario_pnl <= -monte_carlo_VaR].mean()
 ES_summary = pd.DataFrame({
     "ES": [his_ES, para_ES, mc_ES]
 }, index=["Historical", "Parametric", "Monte Carlo"])
+
+print(ES_summary)
 
 
 
