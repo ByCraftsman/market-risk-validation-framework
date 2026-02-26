@@ -192,7 +192,7 @@ while larger samples improve the reliability of risk measurement.
 
 #-----VaR Distribution Plots-----
 def generate_parametric_pnl(std, value, horizon, simulations=10000):
-    simulated_returns = np.random.normal(0, std * np.sqrt(horizon), simulations) #Rₜ ∼ 𝒩(0, σ²T)
+    simulated_returns = np.random.normal(0, std * np.sqrt(horizon), simulations) #Rt ~ N(0, σ²T)
     return simulated_returns * value
 
 parametric_pnl = generate_parametric_pnl(portfolio_std, 1000000, 5)
@@ -400,7 +400,7 @@ where:
 - p: expected failure rate (1 - confidence level)
 
 Decision Rule: 
-    Reject H₀ if LR > 6.63 (at 99% confidence level, df=1)
+    Reject H0 if LR > 6.63 (at 99% confidence level, df=1)
 """
    
 def kupiec_test(var, pnl=rolling_pnl, confidence=0.99):
@@ -452,32 +452,32 @@ Christoffersen Independence Likelihood Ratio (LR) Test
 The LR statistic for testing independence of VaR violations is defined as:
 
 LR_ind = -2 ln [
-    ((1 − π)^(n₀₀ + n₁₀) * π^(n₀₁ + n₁₁)) /
-    ((1 − π₀₁)^(n₀₀) * π₀₁^(n₀₁) * (1 − π₁₁)^(n₁₀) * π₁₁^(n₁₁))
+    ((1 − π)^(n00 + n10) * π^(n01 + n11)) /
+    ((1 − π01)^(n00) * π01^(n01) * (1 − π11)^(n10) * π11^(n11))
 ]
 
 Transition probabilities:
 
-π₀₁ = n₀₁ / (n₀₀ + n₀₁)     π₁₁ = n₁₁ / (n₁₀ + n₁₁)
-π   = (n₀₁ + n₁₁) / (n₀₀ + n₀₁ + n₁₀ + n₁₁)
+π01 = n01 / (n00 + n01)     π11 = n11 / (n10 + n11)
+π   = (n01 + n11) / (n00 + n01 + n10 + n11)
 
 Transition counts:
 
-n₀₀ : no violation → no violation
-n₀₁ : no violation → violation
-n₁₀ : violation → no violation
-n₁₁ : violation → violation
+n00 : no violation → no violation
+n01 : no violation → violation
+n10 : violation → no violation
+n11 : violation → violation
 
 Hypotheses:
 
-H₀: π₀₁ = π₁₁ = π   (violations are independent over time)
-H₁: π₀₁ ≠ π₁₁       (violation clustering exists)
+H₀: π01 = π11 = π   (violations are independent over time)
+H₁: π01 ≠ π11       (violation clustering exists)
 
 Under H₀:
 LR_ind ~ χ²(1)
 
 Decision Rule:
-    Reject H₀ if LR_ind > 6.63  (at 99% confidence level, df = 1)
+    Reject H0 if LR_ind > 6.63  (at 99% confidence level, df = 1)
 """
 
 def christoffersen_independence_test(var, pnl=rolling_pnl, confidence=0.99):
@@ -592,6 +592,93 @@ dynamics and reduce violation clustering.
 
 This result is consistent with well-documented volatility clustering in financial markets.
 """
+
+
+
+
+"""
+Backtesting results (Kupiec, independence, conditional coverage) indicate that the static VaR model
+fails to adequately capture violation frequency and independence. To address volatility clustering
+and time-varying risk, dynamic volatility models (EWMA, GARCH, FHS) are applied sequentially.
+
+Note that static models were evaluated at a 5-day horizon, while EWMA and GARCH were implemented
+as 1-day risk models to capture short-term volatility dynamics.    
+
+
+
+
+EWMA was implemented to address volatility clustering observed in the Christoffersen independence test.
+By allowing time-varying volatility, EWMA helps capture violation clustering and improves VaR reliability.
+
+EWMA volatility estimator (RiskMetrics):
+
+    σ_t² = λ σ_{t-1}² + (1 - λ) r_{t-1}²
+
+RiskMetrics standard decay factors:
+    Daily data:   λ = 0.94
+    Weekly data:  λ = 0.97
+    Monthly data: λ = 0.99
+"""
+
+
+
+
+#-----EWMA-----
+def compute_ewma_volatility(returns, lam=0.94):
+    ewma_var = np.zeros(len(returns))
+    ewma_var[0] = returns.var() 
+
+    for t in range(1, len(returns)):
+        ewma_var[t] = lam * ewma_var[t-1] + (1 - lam) * returns.iloc[t-1]**2
+
+    ewma_vol = np.sqrt(ewma_var)
+    return pd.Series(ewma_vol, index=returns.index)
+
+def compute_ewma_var(returns, value=1000000, horizon=1, confidence=0.99, lam=0.94):
+    ewma_vol = compute_ewma_volatility(returns, lam)
+
+    z = norm.ppf(confidence)
+
+    ewma_var_series = value * ewma_vol * z * np.sqrt(horizon)
+
+    return ewma_var_series, ewma_vol
+
+ewma_VaR_series, ewma_vol = compute_ewma_var(portfolio_returns)
+daily_portfolio_PNL = portfolio_returns*1000000
+
+def ewma_violations(pnl):
+    aligned_var = ewma_VaR_series.loc[pnl.index]
+    return pnl < -aligned_var
+
+ewma_violations = ewma_violations(daily_portfolio_PNL) 
+
+#result
+print("Violations:", ewma_violations.sum())
+print("Violation rate:", ewma_violations.mean())
+print(ewma_VaR_series.mean())
+print(daily_portfolio_PNL.min())
+
+
+
+
+"""
+Backtesting insight:
+    
+The observed violation rate (2.68%) exceeds the expected rate (1%), indicating that the model
+underestimates tail risk.
+
+The largest loss (65,350) is more than 4 times the average VaR estimate (15,850), suggesting the presence
+of fat tails and extreme market movements that are not captured by the normality assumption.
+
+Although EWMA captures volatility clustering, it still relies on a normal distribution assumption. 
+This leads to an underestimation of extreme losses in fat-tailed return distributions.
+
+EWMA assumes symmetric responses to positive and negative shocks, failing to capture leverage effects 
+observed in equity markets. This suggests that tail-sensitive models such as GARCH or Filtered Historical Simulation 
+may provide more robust risk estimates.
+"""
+
+
 
 
 
