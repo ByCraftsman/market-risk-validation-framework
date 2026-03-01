@@ -57,19 +57,24 @@ portfolio_returns = compute_portfolio_returns(log_returns, weights)
 
 
 
-#-----Historical VaR Method-----
-
 """
-Rolling sums of log returns represent cumulative multi-period returns.
-
 [Assumptions]
 
 1. 5-day holding period VaR. Therefore, Mean return is assumed to be zero. 
+
 2. Portfolio value is assumed to be denominated in USD. FX risk excluded.
+   (Since the portfolio mixes Korean and US assets, currency risk
+    would be material in practice. However, for analytical clarity,
+    this framework focuses on market risk only.)
+
 3. 99% confidence level is used. In risk management and regulation
  (e.g., Basel frameworks) to capture extreme tail losses conservatively.
 """
 
+
+
+
+#-----Historical VaR Method-----
 def compute_rolling_pnl(returns, value, horizon):
     rolling = returns.rolling(horizon).sum().dropna()
     return rolling * value
@@ -292,7 +297,7 @@ print(ES_summary)
 #-----Backtesting-----
 """
 Backtesting methodologies for Value-at-Risk (VaR) models are generally grouped into
-three categories:
+four categories:
 
 1. Coverage Tests
    Coverage tests evaluate whether the observed frequency of VaR exceedances
@@ -364,6 +369,8 @@ three categories:
      directly aligned with its objective.
 
 
+
+
 Regulatory Perspective (Basel Framework)
 
 The Basel Committee emphasizes exceedance-based backtesting because:
@@ -381,6 +388,8 @@ In practice, regulators prioritize:
 
 These tests ensure that the model is reliable in estimating extreme losses,
 which is the core objective of market risk regulation.
+
+These exceedance tests form the basis of regulatory frameworks such as the Basel traffic light approach.
 """
 
 
@@ -601,15 +610,10 @@ Backtesting results (Kupiec, independence, conditional coverage) indicate that t
 fails to adequately capture violation frequency and independence. To address volatility clustering
 and time-varying risk, dynamic volatility models (EWMA, GARCH, FHS) are applied sequentially.
 
-Note that static models were evaluated at a 5-day horizon, while EWMA and GARCH were implemented
-as 1-day risk models to capture short-term volatility dynamics.    
-
-
-
-
-EWMA was implemented to address volatility clustering observed in the Christoffersen independence test.
+I implemented EWMA to address volatility clustering observed in the Christoffersen independence test.
 By allowing time-varying volatility, EWMA helps capture violation clustering and improves VaR reliability.
 
+EWMA volatility is implemented following the RiskMetrics framework developed by J.P. Morgan.
 EWMA volatility estimator (RiskMetrics):
 
     σ_t² = λ σ_{t-1}² + (1 - λ) r_{t-1}²
@@ -618,6 +622,9 @@ RiskMetrics standard decay factors:
     Daily data:   λ = 0.94
     Weekly data:  λ = 0.97
     Monthly data: λ = 0.99
+    
+Because λ is determined by data frequency, not VaR horizon. Since the model uses daily returns, 
+λ=0.94 is appropriate. The 5-day VaR is obtained through square-root-of-time scaling.    
 """
 
 
