@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 years = 20
 end_date = dt.datetime.now()
 start_date = end_date - dt.timedelta(days = 365*years)
+
 tickers = [
     '^KS11',      # KOSPI
     '^KQ11',      # KOSDAQ
@@ -119,7 +120,7 @@ print(parametric_VaR)
 
 
 #-----VaR Monte Carlo Method-----
-def compute_monte_carlo_var(log_returns, weights, value=1000000, horizon=5, confidence=0.99, simulations=10000):
+def compute_monte_carlo_VaR(log_returns, weights, value=1000000, horizon=5, confidence=0.99, simulations=10000):
     cov_matrix = log_returns.cov()
     num_assets = len(weights)
     # Again, in short-horizon VaR, mean returns are assumed to be zero. 
@@ -143,7 +144,7 @@ def compute_monte_carlo_var(log_returns, weights, value=1000000, horizon=5, conf
 
     return scenario_pnl, mc_var
 
-scenario_pnl, monte_carlo_VaR = compute_monte_carlo_var(log_returns, weights)
+scenario_pnl, monte_carlo_VaR = compute_monte_carlo_VaR(log_returns, weights)
 
 print(monte_carlo_VaR)
 
@@ -166,12 +167,12 @@ However, differences arise when:
 
 
 
-#-----VaR Convergence Insight-----
+#-----Simulation Convergence Insight-----
 simulation_sizes = [500, 3000, 10000, 50000]
 results = []
 
 for n in simulation_sizes:
-    _, var_estimate = compute_monte_carlo_var(
+    _, var_estimate = compute_monte_carlo_VaR(
         log_returns, weights, simulations=n
     )
     results.append(var_estimate)
@@ -203,7 +204,7 @@ def generate_parametric_pnl(std, value, horizon, simulations=10000):
 parametric_pnl = generate_parametric_pnl(portfolio_std, 1000000, 5)
 
 
-def plot_var_distribution(data, var_value, title, xlim=None, ylim=None): # Optional axis limits allow consistent scaling across plots when needed.
+def plot_VaR_distribution(data, var_value, title, xlim=None, ylim=None): # Optional axis limits allow consistent scaling across plots when needed.
     plt.figure()
     plt.hist(data, bins=100, density=True)
     plt.axvline(-var_value, linestyle='dashed', linewidth=1, label='VaR')
@@ -219,9 +220,9 @@ def plot_var_distribution(data, var_value, title, xlim=None, ylim=None): # Optio
 
 tail_xlim = (-80000, 80000)
 
-plot_var_distribution(rolling_pnl, historical_VaR, 'Historical VaR', tail_xlim)
-plot_var_distribution(parametric_pnl, parametric_VaR, 'Parametric VaR', tail_xlim)
-plot_var_distribution(scenario_pnl, monte_carlo_VaR, 'Monte Carlo VaR', tail_xlim)
+plot_VaR_distribution(rolling_pnl, historical_VaR, 'Historical VaR', tail_xlim)
+plot_VaR_distribution(parametric_pnl, parametric_VaR, 'Parametric VaR', tail_xlim)
+plot_VaR_distribution(scenario_pnl, monte_carlo_VaR, 'Monte Carlo VaR', tail_xlim)
 
 """
 The parametric and Monte Carlo distributions appear narrower (lower standard deviation)
@@ -395,6 +396,140 @@ These exceedance tests form the basis of regulatory frameworks such as the Basel
 
 
 
+"""
+VaR Backtesting Core Principle
+
+We must compare:
+
+    VaR(t)  vs  PnL(t)
+
+Where:
+    VaR(t)  = risk forecast using information up to time t
+    PnL(t)  = realized return from t to t+horizon
+
+Therefore:
+    Forward PnL must be used.
+
+Rolling (backward) PnL leads to incorrect backtesting.
+
+"""
+
+def compute_forward_pnl(returns, value, horizon):
+
+    # future horizon return
+    future_returns = returns.rolling(horizon).sum().shift(-horizon+1)
+
+    pnl = future_returns * value
+
+    return pnl.dropna()
+
+forward_pnl = compute_forward_pnl(portfolio_returns, 1000000, 5)
+
+
+def rolling_historical_VaR(returns, value, horizon, window=1000, confidence=0.99):
+
+    var_list = []
+    index = []
+
+    for i in range(window, len(returns)-horizon):
+
+        pnl_sample = rolling_pnl.iloc[i-window:i]
+
+        var = compute_historical_VaR(pnl_sample, confidence)
+
+        var_list.append(var)
+        index.append(rolling_pnl.index[i])
+
+    return pd.Series(var_list, index=index)
+
+historical_var_series = rolling_historical_VaR(
+    portfolio_returns,
+    value=1000000,
+    horizon=5
+)
+
+
+def rolling_parametric_VaR(log_returns, weights, window=1000,
+                           value=1000000, horizon=5, confidence=0.99):
+
+    var_list = []
+    index = []
+
+    for i in range(window, len(log_returns)-horizon):
+
+        sample_returns = log_returns.iloc[i-window:i]
+
+        var, _ = compute_parametric_VaR(
+            sample_returns,
+            weights,
+            value=value,
+            horizon=horizon,
+            confidence=confidence
+        )
+
+        var_list.append(var)
+        index.append(log_returns.index[i])
+
+    return pd.Series(var_list, index=index)
+
+parametric_var_series = rolling_parametric_VaR(log_returns, weights)
+
+
+
+def rolling_mc_VaR(log_returns, weights, window=1000,
+                   value=1000000, horizon=5, confidence=0.99):
+
+    var_list = []
+    index = []
+
+    for i in range(window, len(log_returns)-horizon):
+
+        sample_returns = log_returns.iloc[i-window:i]
+
+        _, var = compute_monte_carlo_VaR(
+            sample_returns,
+            weights,
+            value=value,
+            horizon=horizon,
+            confidence=confidence
+        )
+
+        var_list.append(var)
+        index.append(log_returns.index[i])
+
+    return pd.Series(var_list, index=index)
+
+mc_var_series = rolling_mc_VaR(log_returns, weights)
+
+
+"""
+We must align all time series to a common index
+    
+This ensures:
+
+    VaR(t) is compared with PnL(t) at the SAME timestamp
+"""
+
+common_index = (
+    historical_var_series.index
+    .intersection(parametric_var_series.index)
+    .intersection(mc_var_series.index)
+    .intersection(forward_pnl.index)
+)
+
+historical_var_series = historical_var_series.loc[common_index]
+parametric_var_series = parametric_var_series.loc[common_index]
+mc_var_series = mc_var_series.loc[common_index]
+
+# Forward PnL is used (NOT rolling PnL)
+pnl_test = forward_pnl.loc[common_index]
+
+
+
+
+
+
+
 #-----Kupiec Unconditional Coverage Test-----
 """
 Proportion of failure Likelihood Ratio (LR) Test
@@ -412,23 +547,26 @@ Decision Rule:
     Reject H0 if LR > 6.63 (at 99% confidence level, df=1)
 """
    
-def kupiec_test(var, pnl=rolling_pnl, confidence=0.99):
+def kupiec_test(var, pnl, confidence=0.99):
     violations = pnl < -var
     x = violations.sum()
     n = len(pnl)
     p = 1 - confidence
+    
+    #Prevent log(0) by bounding the observed violation probability (p_hat)
+    eps = 1e-10
+    p_hat = x / n
+    p_hat = max(min(p_hat, 1 - eps), eps)
 
     likelihood_ratio = -2 * (
         (n-x)*np.log(1-p) + x*np.log(p)
-        - ((n-x)*np.log(1-x/n) + x*np.log(x/n))
+        - ((n-x)*np.log(1-p_hat) + x*np.log(p_hat))
     )
     return likelihood_ratio, x
 
-
-his_likelihood_ratio, his_x = kupiec_test(historical_VaR)
-para_likelihood_ratio, para_x = kupiec_test(parametric_VaR) 
-mc_likelihood_ratio, mc_x = kupiec_test(monte_carlo_VaR)
-
+his_likelihood_ratio, his_x = kupiec_test(historical_var_series, pnl_test)
+para_likelihood_ratio, para_x = kupiec_test(parametric_var_series, pnl_test)
+mc_likelihood_ratio, mc_x = kupiec_test(mc_var_series, pnl_test)
 
 kupiec_test_results = pd.DataFrame({
     "Method": ["Historical VaR", "Parametric VaR", "Monte Carlo VaR"],
@@ -439,20 +577,101 @@ kupiec_test_results = pd.DataFrame({
 print(kupiec_test_results)
 
 """
-Backtesting insight:
+The Expected violation rate is 3759 × 0.01 ≈ 37.6
 
-Historical VaR shows violation frequency consistent with the expected 1% level,
-indicating that empirical distributions capture tail risk reasonably well.
+~
+~
+~~
 
-Parametric and Monte Carlo VaR (both assuming normality) exhibit excessive
-violations (~2.48%), demonstrating that normal distribution assumptions
-underestimate fat tails and extreme losses in financial markets.
-
-This result highlights a well-known limitation of normal-based VaR models.
 """
 
 
 
+
+#Traffic Light 
+"""
+    Basel Traffic Light Test.
+
+    Counts number of VaR violations over the sample.
+
+    Green  : ≤ 4 violations
+    Yellow : 5–9 violations
+    Red    : ≥ 10 violations
+
+    Requirement:
+        PnL must be forward-looking and aligned with VaR.
+
+    Violation:
+        PnL(t) < -VaR(t)
+"""
+
+def traffic_light_rolling(var, pnl, window=250):
+
+    zones = []
+    counts = []
+    index = []
+
+    for i in range(window, len(var)):
+        var_window = var.iloc[i-window:i]
+        pnl_window = pnl.iloc[i-window:i]
+
+        violations = (pnl_window < -var_window).sum()
+
+        if violations <= 4:
+            zone = "Green"
+        elif violations <= 9:
+            zone = "Yellow"
+        else:
+            zone = "Red"
+
+        zones.append(zone)
+        counts.append(violations)
+        index.append(var.index[i])
+
+    return pd.DataFrame({
+        "Violations": counts,
+        "Zone": zones
+    }, index=index)
+
+
+traffic_hist = traffic_light_rolling(historical_var_series, pnl_test)
+traffic_para = traffic_light_rolling(parametric_var_series, pnl_test)
+traffic_mc = traffic_light_rolling(mc_var_series, pnl_test)
+
+#model performance
+def summarize_traffic(df):
+    return df["Zone"].value_counts()
+
+traffic_summary = pd.DataFrame({
+    "Historical": summarize_traffic(traffic_hist),
+    "Parametric": summarize_traffic(traffic_para),
+    "Monte Carlo": summarize_traffic(traffic_mc)
+})
+
+traffic_summary_ratio = traffic_summary.div(traffic_summary.sum())
+
+violations_avg = pd.DataFrame({
+    "Historical": traffic_hist["Violations"].mean(),
+    "Parametric": traffic_para["Violations"].mean(),
+    "Monte Carlo": traffic_mc["Violations"].mean()
+}, index=["Avg Violations"])
+
+print(traffic_summary)
+print(traffic_summary_ratio)
+print(violations_avg)
+
+"""
+~~~
+~~~
+
+
+
+"""
+
+
+
+
+# TODO: Modify to use rolling VaR series and forward PnL for proper backtesting consistency
 
 #-----Christoffersen Independence Test-----
 """
@@ -491,11 +710,12 @@ Decision Rule:
 
 def christoffersen_independence_test(var, pnl=rolling_pnl, confidence=0.99):
     violations = (pnl < -var).astype(int)
+    
 
     # Transition counts
     n00 = n01 = n10 = n11 = 0
 
-    for i in range(1, len(violations)): #첫 관측은 제외함.
+    for i in range(1, len(violations)): #First observation is excluded
         prev = violations.iloc[i-1]
         curr = violations.iloc[i]
         if prev == 0 and curr == 0:
