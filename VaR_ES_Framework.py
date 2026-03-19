@@ -320,7 +320,7 @@ four categories:
 
 
 2. Independence Tests
-   Independence tests assess whether VaR violations occur independently over time.
+    Independence tests assess whether VaR violations occur independently over time.
 
     Example:
        
@@ -345,7 +345,7 @@ four categories:
 
 
 3. Conditional Coverage Tests
-   Conditional coverage tests jointly evaluate both correct coverage and independence.
+    Conditional coverage tests jointly evaluate both correct coverage and independence.
 
     Example:
        
@@ -392,9 +392,9 @@ Regulatory Perspective (Basel Framework)
 
 In practice, regulators prioritize:
     
-   - Coverage (Kupiec)
-   - Independence (Christoffersen)
-   - Conditional Coverage
+    - Coverage (Kupiec)
+    - Independence (Christoffersen)
+    - Conditional Coverage
 
 These tests ensure that the model is reliable in estimating extreme losses,
 which is the core objective of market risk regulation.
@@ -438,6 +438,7 @@ def compute_forward_pnl(returns, value, horizon):
 
     return pnl.dropna()
 
+# The only difference between rolling is the date. 
 forward_pnl = compute_forward_pnl(portfolio_returns, 1000000, 5)
 
 
@@ -596,10 +597,30 @@ kupiec_test_results = pd.DataFrame({
 print(kupiec_test_results)
 
 """
-The Expected violation rate is 3759 × 0.01 ≈ 37.6
+Backtesting insight:
+    
+Expected violations 3759 × 0.01 ≈ 37.6 (at 99% confidence level)
 
-~
-~
+Results:
+    
+    Historical VaR: 37 violations, LR ≈ 0.0107
+    
+    -> Very close to expected level, indicating accurate calibration.
+    
+    Parametric & Monte Carlo VaR: 86 violations, LR is very high ≈ 46.0566.
+    
+    -> Significantly more violations than expected.
+
+Interpretation: 
+    
+    The historical VaR model is well-calibrated, as its violation frequency
+    matches the theoretical expectation.
+    
+    In contrast, both parametric and Monte Carlo VaR models exhibit excessive
+    violations, indicating systematic underestimation of tail risk.
+    
+    This is likely due to distributional assumptions (e.g., normality).
+    which fail to capture fat tails and extreme market movements.
 """
 
 
@@ -607,7 +628,7 @@ The Expected violation rate is 3759 × 0.01 ≈ 37.6
 
 #Traffic Light 
 """
-Regulatory Backtesting (Traffic Light Approach):
+Regulatory Approach (Traffic Light Approach):
     
     The Basel Traffic Light framework classifies VaR models based on the
     number of exceedances over a fixed backtesting window (typically 250 days).    
@@ -691,7 +712,7 @@ traffic_summary = pd.DataFrame({
 
 traffic_summary_ratio = traffic_summary.div(traffic_summary.sum())
 
-violations_avg = pd.DataFrame({
+traffic_violations_avg = pd.DataFrame({
     "Historical": traffic_hist["Violations"].mean(),
     "Parametric": traffic_para["Violations"].mean(),
     "Monte Carlo": traffic_mc["Violations"].mean()
@@ -699,14 +720,27 @@ violations_avg = pd.DataFrame({
 
 print(traffic_summary)
 print(traffic_summary_ratio)
-print(violations_avg)
+print(traffic_violations_avg)
 
 """
-~~~
-~~~
+Traffic Light Results Interpretation
 
+Historical VaR:
+    - High proportion in the green zone (~81%)
+    - Average violations (~2.49) close to expected (~2.5)
 
+    -> Indicates good calibration and reliable risk estimation.
 
+Parametric & Monte Carlo VaR:
+    - Low green zone proportion (~50~52%)
+    - High yellow/red zone frequency (~48~50% combined)
+    - Average violations (~5.8) significantly above expected
+    
+    → These models systematically underestimate risk, 
+      as evidenced by frequent violations and a high proportion of red zones.
+
+This likely stems from distributional assumptions (e.g., normality),
+which fail to capture fat tails and extreme losses.
 """
 
 
