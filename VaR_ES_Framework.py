@@ -39,15 +39,15 @@ prices = fetch_prices(tickers, start_date, end_date)
 # Log returns are used because they are additive.
 def compute_log_returns(price_df):
     
-    returns = np.log(price_df / price_df.shift(1)) #shift는 위의 행. 이전 시계열
+    returns = np.log(price_df / price_df.shift(1)) # shift represents the previous time step in the time series
     
     return returns.dropna()
 
 log_returns = compute_log_returns(prices)
 
 
-#We assume Equal-weighted Portfolio
-weights = np.array([1/len(tickers)]*len(tickers)) #0.25 * 4
+# We assume Equal-weighted Portfolio
+weights = np.array([1/len(tickers)]*len(tickers)) # 0.25 * 4
 
 def compute_portfolio_returns(log_returns, weights):
     
@@ -198,7 +198,7 @@ while larger samples improve the reliability of risk measurement.
 
 #-----VaR Distribution Plots-----
 def generate_parametric_pnl(std, value, horizon, simulations=10000):
-    simulated_returns = np.random.normal(0, std * np.sqrt(horizon), simulations) #Rt ~ N(0, σ²T)
+    simulated_returns = np.random.normal(0, std * np.sqrt(horizon), simulations) # Rt ~ N(0, σ²T)
     return simulated_returns * value
 
 parametric_pnl = generate_parametric_pnl(portfolio_std, 1000000, 5)
@@ -285,7 +285,9 @@ para_ES = (
 mc_ES = -scenario_pnl[scenario_pnl <= -monte_carlo_VaR].mean()
 
 
-#ES Summary
+
+
+#-----ES Summary-----
 ES_summary = pd.DataFrame({
     "ES": [his_ES, para_ES, mc_ES]
 }, index=["Historical", "Parametric", "Monte Carlo"])
@@ -301,91 +303,98 @@ Backtesting methodologies for Value-at-Risk (VaR) models are generally grouped i
 four categories:
 
 1. Coverage Tests
-   Coverage tests evaluate whether the observed frequency of VaR exceedances
-   matches the expected rate implied by the confidence level.
+    Coverage tests evaluate whether the observed frequency of VaR exceedances
+    matches the expected rate implied by the confidence level.
 
-   Example:
-   - Kupiec Unconditional Coverage Test
+    Example:
+       
+    - Kupiec Unconditional Coverage Test
 
-   Purpose:
-   Ensures the model produces the correct proportion of tail losses.
+    Purpose:
+       
+    Ensures the model produces the correct proportion of tail losses.
 
-   Limitation:
-   Does not detect clustering of violations.
+    Limitation:
+       
+    Does not detect clustering of violations.
 
 
 2. Independence Tests
    Independence tests assess whether VaR violations occur independently over time.
 
-   Example:
-   - Christoffersen Independence Test
+    Example:
+       
+    - Christoffersen Independence Test
 
-   Why is this necessary?
+    Why is this necessary?
 
-   A model may produce the correct violation frequency but still be inadequate if
-   violations cluster during periods of market stress. Clustering indicates that
-   the model fails to capture volatility dynamics (e.g., volatility clustering).
+    A model may produce the correct violation frequency but still be inadequate if
+    violations cluster during periods of market stress. Clustering indicates that
+    the model fails to capture volatility dynamics (e.g., volatility clustering).
 
-   Kupiec test only answers:
-       "Is the violation rate correct?"
+    Kupiec test only answers:
+       
+        "Is the violation rate correct?"
 
-   Independence test answers:
-       "Are violations randomly distributed over time?"
+    Independence test answers:
+       
+        "Are violations randomly distributed over time?"
 
-   Detecting clustering is crucial because persistent violations imply that risk
-   is systematically underestimated during turbulent periods.
+    Detecting clustering is crucial because persistent violations imply that risk
+    is systematically underestimated during turbulent periods.
 
 
 3. Conditional Coverage Tests
    Conditional coverage tests jointly evaluate both correct coverage and independence.
 
-   Example:
-   - Christoffersen Conditional Coverage Test
-
-   Why use conditional coverage?
-
-   A robust VaR model must satisfy BOTH:
+    Example:
        
-   • Correct exceedance frequency
-   • Independence of violations
+    - Christoffersen Conditional Coverage Test
 
-   Conditional coverage provides a comprehensive assessment by combining both criteria.
+    Why use conditional coverage?
+
+    A robust VaR model must satisfy BOTH:
+       
+        Correct exceedance frequency
+        Independence of violations
+
+    Conditional coverage provides a comprehensive assessment by combining both criteria.
 
 
 4. Distribution Tests (Not implemented here)
 
-   Distribution tests evaluate whether the entire forecast loss distribution
-   matches the realized loss distribution.
+    Distribution tests evaluate whether the entire forecast loss distribution
+    matches the realized loss distribution.
 
-   Examples:
-   - Berkowitz test
-   - Kolmogorov–Smirnov test
-   - Anderson–Darling test
+    Examples:
+       
+    - Berkowitz test
+    - Kolmogorov–Smirnov test
+    - Anderson–Darling test
 
-   Why are distribution tests not used here?
-
-   • They require full density forecasts, not just VaR quantiles.
-   • Regulatory frameworks (e.g., Basel) focus primarily on exceedance behavior.
-   • VaR is a quantile-based risk measure; therefore, exceedance tests are more
-     directly aligned with its objective.
+    Why are distribution tests not used here?:
+       
+    - They require full density forecasts, not just VaR quantiles.
+    - Regulatory frameworks (e.g., Basel) focus primarily on exceedance behavior.
+    - VaR is a quantile-based risk measure; therefore, exceedance tests are more directly aligned with its objective.
 
 
 
 
 Regulatory Perspective (Basel Framework)
 
-The Basel Committee emphasizes exceedance-based backtesting because:
-
-• Capital requirements depend on tail loss quantiles (VaR/ES).
-• The primary regulatory concern is whether extreme losses are underestimated.
-• Coverage and independence directly assess model reliability in tail risk.
-• Distribution tests provide broader diagnostics but are not essential for
-  regulatory capital validation.
+    The Basel Committee emphasizes exceedance-based backtesting because:
+    
+    - Capital requirements depend on tail loss quantiles (VaR/ES).
+    - The primary regulatory concern is whether extreme losses are underestimated.
+    - Coverage and independence directly assess model reliability in tail risk.
+    - Distribution tests provide broader diagnostics but are not essential for regulatory capital validation.
 
 In practice, regulators prioritize:
-    - Coverage (Kupiec)
-    - Independence (Christoffersen)
-    - Conditional Coverage
+    
+   - Coverage (Kupiec)
+   - Independence (Christoffersen)
+   - Conditional Coverage
 
 These tests ensure that the model is reliable in estimating extreme losses,
 which is the core objective of market risk regulation.
@@ -404,14 +413,20 @@ We must compare:
     VaR(t)  vs  PnL(t)
 
 Where:
+    
     VaR(t)  = risk forecast using information up to time t
     PnL(t)  = realized return from t to t+horizon
 
 Therefore:
+    
     Forward PnL must be used.
 
 Rolling (backward) PnL leads to incorrect backtesting.
 
+
+Also, note that the historical VaR is based on empirical forward PnL,
+while parametric and Monte Carlo VaR rely on return-based models.
+This reflects practical differences in model construction rather than inconsistency.
 """
 
 def compute_forward_pnl(returns, value, horizon):
@@ -426,27 +441,27 @@ def compute_forward_pnl(returns, value, horizon):
 forward_pnl = compute_forward_pnl(portfolio_returns, 1000000, 5)
 
 
-def rolling_historical_VaR(returns, value, horizon, window=1000, confidence=0.99):
+
+
+def rolling_historical_VaR(pnl_series, window=1000, confidence=0.99):
 
     var_list = []
     index = []
 
-    for i in range(window, len(returns)-horizon):
+    for i in range(window, len(pnl_series)):
 
-        pnl_sample = rolling_pnl.iloc[i-window:i]
+        pnl_sample = pnl_series.iloc[i-window:i]
 
         var = compute_historical_VaR(pnl_sample, confidence)
 
         var_list.append(var)
-        index.append(rolling_pnl.index[i])
+        index.append(pnl_series.index[i])
 
     return pd.Series(var_list, index=index)
 
-historical_var_series = rolling_historical_VaR(
-    portfolio_returns,
-    value=1000000,
-    horizon=5
-)
+historical_var_series = rolling_historical_VaR(forward_pnl)
+
+
 
 
 def rolling_parametric_VaR(log_returns, weights, window=1000,
@@ -459,6 +474,7 @@ def rolling_parametric_VaR(log_returns, weights, window=1000,
 
         sample_returns = log_returns.iloc[i-window:i]
 
+        #We do not need Potfolio std
         var, _ = compute_parametric_VaR(
             sample_returns,
             weights,
@@ -476,6 +492,7 @@ parametric_var_series = rolling_parametric_VaR(log_returns, weights)
 
 
 
+
 def rolling_mc_VaR(log_returns, weights, window=1000,
                    value=1000000, horizon=5, confidence=0.99):
 
@@ -486,6 +503,7 @@ def rolling_mc_VaR(log_returns, weights, window=1000,
 
         sample_returns = log_returns.iloc[i-window:i]
 
+        #We do not need Scenario pnl
         _, var = compute_monte_carlo_VaR(
             sample_returns,
             weights,
@@ -502,14 +520,19 @@ def rolling_mc_VaR(log_returns, weights, window=1000,
 mc_var_series = rolling_mc_VaR(log_returns, weights)
 
 
+
+
 """
 We must align all time series to a common index
     
 This ensures:
 
     VaR(t) is compared with PnL(t) at the SAME timestamp
+
+(due to rolling windows and horizon shifts, indices differ across series)
 """
 
+#Keep only timestamps where all VaR series and PnL are available
 common_index = (
     historical_var_series.index
     .intersection(parametric_var_series.index)
@@ -517,15 +540,11 @@ common_index = (
     .intersection(forward_pnl.index)
 )
 
+# Align all series to the same index for 1:1 comparison
 historical_var_series = historical_var_series.loc[common_index]
 parametric_var_series = parametric_var_series.loc[common_index]
 mc_var_series = mc_var_series.loc[common_index]
-
-# Forward PnL is used (NOT rolling PnL)
 pnl_test = forward_pnl.loc[common_index]
-
-
-
 
 
 
@@ -581,8 +600,6 @@ The Expected violation rate is 3759 × 0.01 ≈ 37.6
 
 ~
 ~
-~~
-
 """
 
 
@@ -590,7 +607,10 @@ The Expected violation rate is 3759 × 0.01 ≈ 37.6
 
 #Traffic Light 
 """
-    Basel Traffic Light Test.
+Regulatory Backtesting (Traffic Light Approach):
+    
+    The Basel Traffic Light framework classifies VaR models based on the
+    number of exceedances over a fixed backtesting window (typically 250 days).    
 
     Counts number of VaR violations over the sample.
 
@@ -603,6 +623,27 @@ The Expected violation rate is 3759 × 0.01 ≈ 37.6
 
     Violation:
         PnL(t) < -VaR(t)
+        
+    Key Idea:
+        
+        Unlike statistical tests such as the Kupiec test, the Traffic Light approach
+        does not rely on hypothesis testing or p-values.
+        
+        Instead, it provides a simple rule-based classification that directly impacts
+        regulatory capital requirements.
+        
+    Relationship with Kupiec Test:
+
+    - Both evaluate exceedance frequency
+    - Kupiec provides statistical significance
+    - Traffic Light provides regulatory action
+
+
+    Why include Traffic Light?:
+
+    - It is the standard regulatory implementation of backtesting results
+    - It translates statistical outcomes into capital penalties
+    - Widely used under Basel frameworks for market risk        
 """
 
 def traffic_light_rolling(var, pnl, window=250):
