@@ -29,7 +29,7 @@ def fetch_prices(tickers, start_date, end_date):
         For ETFs, 'Adj Close' is used to account for corporate actions.
         """
 
-        df[ticker] = data['Adj Close'] if 'Adj Close' in data else data['Close']
+        df[ticker] = data['Adj Close'] if 'Adj Close' in data.columns else data['Close']
 
     return df.dropna()
 
@@ -297,7 +297,7 @@ print(ES_summary)
 
 
 
-#-----Backtesting-----
+#-----Backtesting Methodologies-----
 """
 Backtesting methodologies for Value-at-Risk (VaR) models are generally grouped into
 four categories:
@@ -550,6 +550,31 @@ pnl_test = forward_pnl.loc[common_index]
 
 
 
+#-----Important Notes-----
+"""
+The framework is built around a 5-day VaR horizon to reflect holding-period risk.
+However, in rolling backtesting, 5-day forward PnL constructed using overlapping
+windows may induce artificial serial dependence in VaR violations.
+
+To ensure a more reliable interpretation, different backtesting metrics are
+evaluated on different samples:
+    
+    - Kupiec and traffic-light results are evaluated on the full overlapping sample,
+      as they primarily assess violation frequency.
+
+    - For independence analysis, a non-overlapping 5-day sample is constructed to
+      mitigate the impact of overlapping observations.
+
+    - Accordingly, the Kupiec test is also recomputed on the non-overlapping sample
+      so that conditional coverage (CC) tests are based on a consistent dataset.
+
+This separation allows frequency and independence effects to be interpreted
+without distortion from overlapping-window construction.
+"""
+
+
+
+
 #-----Kupiec Unconditional Coverage Test-----
 """
 Proportion of failure Likelihood Ratio (LR) Test
@@ -584,14 +609,14 @@ def kupiec_test(var, pnl, confidence=0.99):
     )
     return likelihood_ratio, x
 
-his_likelihood_ratio, his_x = kupiec_test(historical_var_series, pnl_test)
-para_likelihood_ratio, para_x = kupiec_test(parametric_var_series, pnl_test)
-mc_likelihood_ratio, mc_x = kupiec_test(mc_var_series, pnl_test)
+his_kupiec_LR, his_kupiec_x = kupiec_test(historical_var_series, pnl_test)
+para_kupiec_LR, para_kupiec_x = kupiec_test(parametric_var_series, pnl_test)
+mc_kupiec_LR, mc_kupiec_x = kupiec_test(mc_var_series, pnl_test)
 
 kupiec_test_results = pd.DataFrame({
-    "Method": ["Historical VaR", "Parametric VaR", "Monte Carlo VaR"],
-    "LR Statistic": [his_likelihood_ratio, para_likelihood_ratio, mc_likelihood_ratio],
-    "Violations (x)": [his_x, para_x, mc_x],
+    "Method": ["Historical", "Parametric", "Monte Carlo"],
+    "LR Statistic": [his_kupiec_LR, para_kupiec_LR, mc_kupiec_LR],
+    "Violations (x)": [his_kupiec_x, para_kupiec_x, mc_kupiec_x],
 })
 
 print(kupiec_test_results)
@@ -700,7 +725,6 @@ traffic_hist = traffic_light_rolling(historical_var_series, pnl_test)
 traffic_para = traffic_light_rolling(parametric_var_series, pnl_test)
 traffic_mc = traffic_light_rolling(mc_var_series, pnl_test)
 
-#model performance
 def summarize_traffic(df):
     return df["Zone"].value_counts()
 
@@ -746,7 +770,82 @@ which fail to capture fat tails and extreme losses.
 
 
 
-# TODO: Modify to use rolling VaR series and forward PnL for proper backtesting consistency
+#-----Non-overlapping samples-----
+"""
+Because the 5-day forward PnL is constructed using overlapping windows,
+consecutive violations may exhibit mechanical serial dependence.
+
+To avoid overstating violation clustering, Christoffersen independence and
+conditional coverage tests are additionally evaluated using a non-overlapping
+5-day sample.
+
+start=0 is chosen for simplicity. Different starting offsets may produce
+slightly different results.
+"""
+
+def make_non_overlapping_samples(var, pnl, horizon=5, start=0):
+    paired = pd.DataFrame({
+        "VaR": var,
+        "PnL": pnl
+    }).dropna()
+
+    sampled = paired.iloc[start::horizon].copy()
+
+    return sampled["VaR"], sampled["PnL"]
+
+hist_var_nonoverlap, hist_pnl_nonoverlap = make_non_overlapping_samples(
+                                           historical_var_series, pnl_test, horizon=5, start=0)
+
+para_var_nonoverlap, para_pnl_nonoverlap = make_non_overlapping_samples(
+                                           parametric_var_series, pnl_test, horizon=5, start=0)
+
+mc_var_nonoverlap, mc_pnl_nonoverlap = make_non_overlapping_samples(
+                                       mc_var_series, pnl_test, horizon=5, start=0)
+
+
+
+
+#-----Kupiec Test on Non-overlapping Sample-----
+his_kupiec_LR_NO, his_kupiec_x_NO = kupiec_test(hist_var_nonoverlap, hist_pnl_nonoverlap)
+para_kupiec_LR_NO, para_kupiec_x_NO = kupiec_test(para_var_nonoverlap, para_pnl_nonoverlap)
+mc_kupiec_LR_NO, mc_kupiec_x_NO = kupiec_test(mc_var_nonoverlap, mc_pnl_nonoverlap)
+
+kupiec_nonoverlap_results = pd.DataFrame({
+    "Method": ["Historical", "Parametric", "Monte Carlo"],
+    "LR Statistic (Non-overlapping)": [his_kupiec_LR_NO, para_kupiec_LR_NO, mc_kupiec_LR_NO],
+    "Violations (x)": [his_kupiec_x_NO, para_kupiec_x_NO, mc_kupiec_x_NO]
+})
+
+print(kupiec_nonoverlap_results)
+
+"""
+Kupiec Test Comparison
+
+        Method  LR Statistic (overlapping)  Violations (x)
+0   Historical        0.011054                   37
+1   Parametric       44.363756                   85
+2  Monte Carlo       44.363756                   85
+
+
+        Method  LR Statistic (Non-overlapping)  Violations (x)
+0   Historical            1.414182                  11
+1   Parametric           18.517192                  22
+2  Monte Carlo           18.517192                  22
+
+While the magnitude of the statistics changes due to sample construction, 
+the overall backtesting conclusions remain unchanged:
+
+    - Historical VaR is well-calibrated
+    - Parametric and Monte Carlo VaR fail due to insufficient tail coverage
+
+This indicates that the observed discrepancies are driven by model
+misspecification in the tail rather than sampling effects.
+
+This confirms that the conclusions are robust to the choice of sampling scheme.
+"""
+
+
+
 
 #-----Christoffersen Independence Test-----
 """
@@ -781,12 +880,20 @@ LR_ind ~ χ²(1)
 
 Decision Rule:
     Reject H0 if LR_ind > 6.63  (at 99% confidence level, df = 1)
+    
+    
+Because 5-day forward PnL is constructed using overlapping windows, consecutive
+violations may exhibit mechanical serial dependence.
+
+Therefore:
+    
+Christoffersen independence and conditional coverage tests are additionally
+evaluated on a non-overlapping 5-day sample to avoid overstating violation clustering.
 """
 
-def christoffersen_independence_test(var, pnl=rolling_pnl, confidence=0.99):
+def christoffersen_independence_test(var, pnl):
     violations = (pnl < -var).astype(int)
     
-
     # Transition counts
     n00 = n01 = n10 = n11 = 0
 
@@ -806,6 +913,12 @@ def christoffersen_independence_test(var, pnl=rolling_pnl, confidence=0.99):
     pi01 = n01 / (n00 + n01) if (n00 + n01) > 0 else 0
     pi11 = n11 / (n10 + n11) if (n10 + n11) > 0 else 0
     pi = (n01 + n11) / (n00 + n01 + n10 + n11)
+    
+    # Prevent log(0)
+    eps = 1e-10
+    pi01 = max(min(pi01, 1 - eps), eps)
+    pi11 = max(min(pi11, 1 - eps), eps)
+    pi = max(min(pi, 1 - eps), eps)
 
     # Likelihood ratio
     LR_ind = -2 * (
@@ -817,13 +930,13 @@ def christoffersen_independence_test(var, pnl=rolling_pnl, confidence=0.99):
     return LR_ind, (n00, n01, n10, n11)
 
 
-his_ind_lr, his_trans = christoffersen_independence_test(historical_VaR)
-para_ind_lr, para_trans = christoffersen_independence_test(parametric_VaR)
-mc_ind_lr, mc_trans = christoffersen_independence_test(monte_carlo_VaR)
+his_ind_lr, his_trans = christoffersen_independence_test(hist_var_nonoverlap, hist_pnl_nonoverlap)
+para_ind_lr, para_trans = christoffersen_independence_test(para_var_nonoverlap, para_pnl_nonoverlap)
+mc_ind_lr, mc_trans = christoffersen_independence_test(mc_var_nonoverlap, mc_pnl_nonoverlap)
 
 independence_results = pd.DataFrame({
     "Method": ["Historical", "Parametric", "Monte Carlo"],
-    "LR Independence": [his_ind_lr, para_ind_lr, mc_ind_lr],
+    "LR Independence (Non-overlapping)": [his_ind_lr, para_ind_lr, mc_ind_lr],
 })
 
 print(independence_results)
@@ -834,29 +947,37 @@ print(mc_trans)
 """
 Backtesting insight:
 
-The extremely large LR statistics from the Christoffersen independence test
-indicate strong violation clustering. This is consistent with well-known
-features of financial returns such as volatility clustering and regime shifts.
+Independence test statistics (non-overlapping sample):
+    
+    Historical VaR        : 2.11
+    Parametric / Monte Carlo VaR : ~2.00
 
-The results suggest that static volatility assumptions (as in normal VaR)
-fail to capture time-varying risk, leading to concentrated exceedances
-during periods of market stress.
+The extremely large LR statistics observed under the overlapping 5-day specification
+(Historical > 200, Parametric / Monte Carlo > 400) largely disappear when using a
+non-overlapping sample.
+
+This indicates that a substantial portion of the previously observed violation
+clustering was mechanically induced by overlapping forward PnL construction,
+rather than reflecting genuine serial dependence in VaR violations.
+
+This highlights the importance of distinguishing between true model deficiencies
+and artifacts introduced by data construction.
 """
 
 
 
 
-#-----Christoffersen Conditional Coverage test-----
+#-----Christoffersen Conditional Coverage Test (Non-overlapping)-----
 def conditional_coverage_test(lr_uc, lr_ind):
     return lr_uc + lr_ind
 
-his_CCI_test_result = conditional_coverage_test(his_likelihood_ratio, his_ind_lr)
-para_CCI_test_result = conditional_coverage_test(para_likelihood_ratio, para_ind_lr)
-mc_CCI_test_result = conditional_coverage_test(mc_likelihood_ratio, mc_ind_lr)
+his_CCI_test_result = conditional_coverage_test(his_kupiec_LR_NO, his_ind_lr)
+para_CCI_test_result = conditional_coverage_test(para_kupiec_LR_NO, para_ind_lr)
+mc_CCI_test_result = conditional_coverage_test(mc_kupiec_LR_NO, mc_ind_lr)
 
 CCI_results = pd.DataFrame({
     "Method": ["Historical", "Parametric", "Monte Carlo"],
-    "LR_CC": [
+    "LR_CC (Non-overlapping)": [
         his_CCI_test_result,
         para_CCI_test_result,
         mc_CCI_test_result
@@ -867,40 +988,32 @@ print(CCI_results)
 
 """
 Backtesting insight:
-
-[Historical VaR]
-
-Finding: 
     
-    Passed UC (LR=0.0027~), but failed CC due to Ind (LR=224.98).
+The conditional coverage results are largely driven by the unconditional
+coverage component, as independence is no longer rejected.
 
-    
-[Parametric & Monte Carlo VaR]
+This implies that the primary weakness of the parametric and Monte Carlo VaR
+models lies in systematic underestimation of tail risk, rather than strong
+serial dependence in violations.
 
-Finding: 
-    
-    Failed both UC and Ind (LR_cc > 500).
+In contrast, the historical VaR model remains broadly consistent with both
+coverage and independence requirements.
 
-
-[Interpretation]
-
-From a regulatory and risk-management perspective, a high LR_CC statistic is a red flag,
-indicating that VaR violations are not only too frequent but also temporally clustered.
-
-This suggests that the model fails to capture time-varying volatility and regime shifts,
-leading to an underestimation of risk during periods of market stress.
-
-To address this issue, more advanced approaches such as GARCH-based volatility models
-or Filtered Historical Simulation (FHS) can be employed to better account for volatility
-dynamics and reduce violation clustering.
-
-This result is consistent with well-documented volatility clustering in financial markets.
+Overall, removing overlapping effects provides a cleaner diagnosis by
+separating artificial serial dependence from genuine model deficiencies.
 """
 
 
 
 
+# TODO: Modify for consistency issues.
+
+
+
+
 """
+XXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+
 Backtesting results (Kupiec, independence, conditional coverage) indicate that the static VaR model
 fails to adequately capture violation frequency and independence. To address volatility clustering
 and time-varying risk, dynamic volatility models (EWMA, GARCH, FHS) are applied sequentially.
@@ -964,6 +1077,7 @@ print(daily_portfolio_PNL.min())
 
 
 """
+XXXXXXXXXXXXXX
 Backtesting insight:
     
 The observed violation rate (2.68%) exceeds the expected rate (1%), indicating that the model
