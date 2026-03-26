@@ -69,7 +69,7 @@ def compute_log_returns(price_df):
 log_returns = compute_log_returns(prices)
 
 
-weights = np.array([1/len(tickers)]*len(tickers)) # 0.25 * 4
+weights = np.array([1/len(tickers)]*len(tickers))
 
 def compute_portfolio_returns(log_returns, weights):
     
@@ -409,26 +409,25 @@ These exceedance tests form the basis of regulatory frameworks such as the Basel
 """
 VaR Backtesting Core Principle
 
-We must compare:
+We compare:
 
     VaR(t)  vs  PnL(t)
 
 Where:
-    
-    VaR(t)  = risk forecast using information up to time t
-    PnL(t)  = realized return from t to t+horizon
+
+    VaR(t) = risk forecast using information available up to time t
+    PnL(t) = realized PnL from t to t+horizon
 
 Therefore:
-    
-    Forward PnL must be used.
 
-Rolling (backward) PnL leads to incorrect backtesting.
+    - rolling (backward) PnL is used to estimate historical rolling VaR
+    - forward PnL is used for backtesting, because it represents the realized
+      future loss after the VaR forecast is made
 
-
-Also, note that the historical VaR is based on empirical forward PnL,
-while parametric and Monte Carlo VaR rely on return-based models.
-This reflects practical differences in model construction rather than inconsistency.
+The forward PnL series is also used for index alignment so that each VaR forecast
+is matched with the realized PnL over the same forecast origin.
 """
+
 
 def compute_forward_pnl(returns, value, horizon):
 
@@ -439,7 +438,7 @@ def compute_forward_pnl(returns, value, horizon):
 
     return pnl.dropna()
 
-# The only difference between rolling is the date. 
+# forward_pnl shifts the horizon forward so that each timestamp represents the realized future PnL used for backtesting.
 forward_pnl = compute_forward_pnl(portfolio_returns, 1000000, 5)
 
 
@@ -461,7 +460,7 @@ def rolling_historical_VaR(pnl_series, window=1000, confidence=0.99):
 
     return pd.Series(var_list, index=index)
 
-historical_var_series = rolling_historical_VaR(forward_pnl)
+historical_var_series = rolling_historical_VaR(rolling_pnl)
 
 
 
@@ -1012,15 +1011,22 @@ separating artificial serial dependence from genuine model deficiencies.
 
 
 
+
 """
-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+Dynamic Volatility Extension: EWMA
 
-Backtesting results (Kupiec, independence, conditional coverage) indicate that the static VaR model
-fails to adequately capture violation frequency and independence. To address volatility clustering
-and time-varying risk, dynamic volatility models (EWMA, GARCH, FHS) are applied sequentially.
+The static parametric and Monte Carlo models show weak tail coverage under
+backtesting. EWMA is introduced as a dynamic volatility extension to test
+whether time-varying volatility scaling improves VaR coverage relative to
+static volatility assumptions.
 
-I implemented EWMA to address volatility clustering observed in the Christoffersen independence test.
-By allowing time-varying volatility, EWMA helps capture violation clustering and improves VaR reliability.
+Importantly, EWMA is evaluated on the same basis as the previous models:
+- 5-day VaR horizon
+- 99% confidence level
+- same portfolio value
+- same forward 5-day realized PnL for backtesting
+
+This keeps the comparison across models internally consistent.
 
 EWMA volatility is implemented following the RiskMetrics framework developed by J.P. Morgan.
 EWMA volatility estimator (RiskMetrics):
@@ -1035,8 +1041,6 @@ RiskMetrics standard decay factors:
 Because λ is determined by data frequency, not VaR horizon. Since the model uses daily returns, 
 λ=0.94 is appropriate. The 5-day VaR is obtained through square-root-of-time scaling.    
 """
-
-
 
 
 #-----EWMA-----
@@ -1077,23 +1081,6 @@ print(daily_portfolio_PNL.min())
 
 
 
-"""
-XXXXXXXXXXXXXX
-Backtesting insight:
-    
-The observed violation rate (2.68%) exceeds the expected rate (1%), indicating that the model
-underestimates tail risk.
-
-The largest loss (65,350) is more than 4 times the average VaR estimate (15,850), suggesting the presence
-of fat tails and extreme market movements that are not captured by the normality assumption.
-
-Although EWMA captures volatility clustering, it still relies on a normal distribution assumption. 
-This leads to an underestimation of extreme losses in fat-tailed return distributions.
-
-EWMA assumes symmetric responses to positive and negative shocks, failing to capture leverage effects 
-observed in equity markets. This suggests that tail-sensitive models such as GARCH or Filtered Historical Simulation 
-may provide more robust risk estimates.
-"""
 
 
 
