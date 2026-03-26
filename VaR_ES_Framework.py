@@ -10,10 +10,10 @@ end_date = dt.datetime.now()
 start_date = end_date - dt.timedelta(days = 365*years)
 
 tickers = [
-    '^KS11',      # KOSPI
-    '^KQ11',      # KOSDAQ
-    'IEF',        # US 7–10Y Treasury ETF
-    '^GSPC'       # S&P 500 
+    '^KS11',      # KOSPI Composite Index
+    '^KQ11',      # Kosdaq Composite Index
+    'IEF',        # iShares 7-10 Year Treasury Bond ETF
+    '^GSPC'       # S&P 500
 ]
 
 
@@ -36,7 +36,30 @@ def fetch_prices(tickers, start_date, end_date):
 prices = fetch_prices(tickers, start_date, end_date)
 
 
-# Log returns are used because they are additive.
+
+
+"""
+[Modeling Assumptions]
+
+1. Log returns are used because they are additive over time,
+   which is convenient for multi-period risk measurement.
+
+2. The portfolio is assumed to be equal-weighted across the selected assets.
+
+3. VaR and ES are estimated over a 5-day holding period at the 99% confidence level.
+
+4. For short-horizon parametric and Monte Carlo VaR, mean returns are assumed to be zero, 
+   which is standard practice for short-horizon VaR.
+
+5. Portfolio value is assumed to be denominated in USD, and FX risk is excluded.
+   (Since the portfolio mixes Korean and US assets, currency risk would be
+   material in practice. However, for analytical clarity, this framework
+   focuses on market risk only.)
+"""
+
+
+
+
 def compute_log_returns(price_df):
     
     returns = np.log(price_df / price_df.shift(1)) # shift represents the previous time step in the time series
@@ -46,7 +69,6 @@ def compute_log_returns(price_df):
 log_returns = compute_log_returns(prices)
 
 
-# We assume Equal-weighted Portfolio
 weights = np.array([1/len(tickers)]*len(tickers)) # 0.25 * 4
 
 def compute_portfolio_returns(log_returns, weights):
@@ -54,23 +76,6 @@ def compute_portfolio_returns(log_returns, weights):
     return (log_returns * weights).sum(axis=1)
 
 portfolio_returns = compute_portfolio_returns(log_returns, weights)
-
-
-
-
-"""
-[Assumptions]
-
-1. 5-day holding period VaR. Therefore, Mean return is assumed to be zero. 
-
-2. Portfolio value is assumed to be denominated in USD. FX risk excluded.
-   (Since the portfolio mixes Korean and US assets, currency risk
-    would be material in practice. However, for analytical clarity,
-    this framework focuses on market risk only.)
-
-3. 99% confidence level is used. In risk management and regulation
- (e.g., Basel frameworks) to capture extreme tail losses conservatively.
-"""
 
 
 
@@ -101,7 +106,6 @@ def compute_parametric_VaR(log_returns, weights, value=1000000, horizon=5, confi
     cov_matrix = log_returns.cov()     # daily covariance
     portfolio_std = np.sqrt(weights.T @ cov_matrix @ weights) # T means Transpose.
     
-    # Mean return is assumed to be zero (This is standard practice for short-horizon VaR)
     var = (
           value
         * portfolio_std
@@ -123,7 +127,6 @@ print(parametric_VaR)
 def compute_monte_carlo_VaR(log_returns, weights, value=1000000, horizon=5, confidence=0.99, simulations=10000):
     cov_matrix = log_returns.cov()
     num_assets = len(weights)
-    # Again, in short-horizon VaR, mean returns are assumed to be zero. 
     mu = np.zeros(num_assets) 
 
     # Simulate asset returns from a multivariate normal distribution
@@ -137,9 +140,7 @@ def compute_monte_carlo_VaR(log_returns, weights, value=1000000, horizon=5, conf
     # Scale returns to T-day horizon (variance scales with time → std scales with sqrt(T))
     # *= is the Compound Assignment Operator that means a = a * b
     portfolio_sim_returns *= np.sqrt(horizon)
-    # PnL 
     scenario_pnl = value * portfolio_sim_returns
-    # VaR
     mc_var = -np.percentile(scenario_pnl, (1 - confidence) * 100)
 
     return scenario_pnl, mc_var
