@@ -625,21 +625,23 @@ print(kupiec_test_results)
 Backtesting insight:
     
 Expected violations 3759 × 0.01 ≈ 37.6 (at 99% confidence level)
-
+    
 Results:
     
-    Historical VaR: 37 violations, LR ≈ 0.0107
+    Historical VaR: 40 violations, LR ≈ 0.153
+        
+        -> Slightly above the theoretical expectation, but still close enough
+           to indicate broadly acceptable unconditional coverage.
     
-    -> Very close to expected level, indicating accurate calibration.
-    
-    Parametric & Monte Carlo VaR: 86 violations, LR is very high ≈ 46.0566.
-    
-    -> Significantly more violations than expected.
+    Parametric / Monte Carlo VaR: 85 violations, LR ≈ 44.49
+        
+        -> Far more violations than expected, indicating substantial
+           underestimation of tail risk.
 
 Interpretation: 
     
     The historical VaR model is well-calibrated, as its violation frequency
-    matches the theoretical expectation.
+    fairly matches the theoretical expectation.
     
     In contrast, both parametric and Monte Carlo VaR models exhibit excessive
     violations, indicating systematic underestimation of tail risk.
@@ -750,21 +752,27 @@ print(traffic_violations_avg)
 Traffic Light Results Interpretation
 
 Historical VaR:
-    - High proportion in the green zone (~81%)
-    - Average violations (~2.49) close to expected (~2.5)
+    - Green zone ratio ≈ 0.809
+    - Yellow zone ratio ≈ 0.097
+    - Red zone ratio ≈ 0.094
+    - Average violations ≈ 2.71
 
-    -> Indicates good calibration and reliable risk estimation.
+    -> The historical model remains broadly well calibrated under the traffic
+       light framework, with an average violation count still close to the
+       expected benchmark of about 2.5 per 250-day window.
 
 Parametric & Monte Carlo VaR:
-    - Low green zone proportion (~50~52%)
-    - High yellow/red zone frequency (~48~50% combined)
-    - Average violations (~5.8) significantly above expected
-    
-    → These models systematically underestimate risk, 
-      as evidenced by frequent violations and a high proportion of red zones.
+    - Green zone ratio ≈ 0.519
+    - Yellow zone ratio ≈ 0.281
+    - Red zone ratio ≈ 0.200
+    - Average violations ≈ 5.83
 
-This likely stems from distributional assumptions (e.g., normality),
-which fail to capture fat tails and extreme losses.
+    -> These models generate too many exceedances and spend a large share of
+       time in yellow/red zones, indicating persistent underestimation of risk.
+
+Overall:
+    historical VaR performs materially better, while parametric and Monte Carlo
+    VaR underestimate tail losses under static normality-based assumptions.
 """
 
 
@@ -821,27 +829,39 @@ print(kupiec_nonoverlap_results)
 """
 Kupiec Test Comparison
 
-        Method  LR Statistic (overlapping)  Violations (x)
-0   Historical        0.011054                   37
-1   Parametric       44.363756                   85
-2  Monte Carlo       44.363756                   85
+Overlapping sample:
 
+    Historical VaR:
+        LR ≈ 0.1529, violations = 40
 
-        Method  LR Statistic (Non-overlapping)  Violations (x)
-0   Historical            1.414182                  11
-1   Parametric           18.517192                  22
-2  Monte Carlo           18.517192                  22
+        -> Violation frequency remains close to the theoretical expectation,
+           indicating broadly acceptable unconditional coverage.
 
-While the magnitude of the statistics changes due to sample construction, 
-the overall backtesting conclusions remain unchanged:
+    Parametric / Monte Carlo VaR:
+        LR ≈ 44.4918, violations = 85
 
-    - Historical VaR is well-calibrated
-    - Parametric and Monte Carlo VaR fail due to insufficient tail coverage
+        -> Exceedances are far above expectation, indicating substantial
+           underestimation of tail risk.
 
-This indicates that the observed discrepancies are driven by model
-misspecification in the tail rather than sampling effects.
+Non-overlapping sample:
 
-This confirms that the conclusions are robust to the choice of sampling scheme.
+    Historical VaR:
+        LR ≈ 0.0372, violations = 7
+
+        -> Coverage remains well calibrated after overlap effects are removed.
+
+    Parametric / Monte Carlo VaR:
+        LR ≈ 3.3124, violations = 13
+
+        -> Coverage improves materially relative to the overlapping sample.
+           The exceedance frequency is still somewhat high, but the LR statistic
+           no longer indicates strong rejection at the 99% level.
+
+Overall:
+
+    Historical VaR remains the best-calibrated model.
+    Parametric and Monte Carlo VaR remain weaker, especially on the full
+    overlapping sample, where tail losses are clearly underestimated.
 """
 
 
@@ -948,20 +968,25 @@ print(mc_trans)
 Backtesting insight:
 
 Independence test statistics (non-overlapping sample):
-    
-    Historical VaR        : 2.11
-    Parametric / Monte Carlo VaR : ~2.00
 
-The extremely large LR statistics observed under the overlapping 5-day specification
-(Historical > 200, Parametric / Monte Carlo > 400) largely disappear when using a
-non-overlapping sample.
+    Historical VaR              : 3.855
+    Parametric / Monte Carlo    : 1.530
+
+Compared with the overlapping 5-day specification, the LR independence statistics
+drop materially once non-overlapping samples are used.
 
 This indicates that a substantial portion of the previously observed violation
-clustering was mechanically induced by overlapping forward PnL construction,
-rather than reflecting genuine serial dependence in VaR violations.
+clustering was mechanically induced by overlapping forward PnL construction.
 
-This highlights the importance of distinguishing between true model deficiencies
-and artifacts introduced by data construction.
+Interpretation:
+
+    - Historical VaR shows a somewhat larger dependence statistic than the other
+      models, but not enough to reject independence at the 99% level.
+    - Parametric and Monte Carlo VaR show even weaker evidence of residual
+      dependence once overlap effects are removed.
+
+This highlights the importance of distinguishing overlap-induced serial dependence
+from genuine model failure.
 """
 
 
@@ -988,26 +1013,29 @@ print(CCI_results)
 
 """
 Backtesting insight:
-    
-The conditional coverage results are largely driven by the unconditional
-coverage component, as independence is no longer rejected.
 
-This implies that the primary weakness of the parametric and Monte Carlo VaR
-models lies in systematic underestimation of tail risk, rather than strong
-serial dependence in violations.
+Conditional coverage results on the non-overlapping sample are:
 
-In contrast, the historical VaR model remains broadly consistent with both
-coverage and independence requirements.
+    Historical VaR           : LR_CC ≈ 3.892
+    Parametric / Monte Carlo : LR_CC ≈ 4.842
 
-Overall, removing overlapping effects provides a cleaner diagnosis by
-separating artificial serial dependence from genuine model deficiencies.
+Interpretation:
+
+    All three models remain below standard rejection thresholds on the
+    non-overlapping sample.
+
+    Historical VaR still performs best overall, while Parametric and Monte Carlo
+    VaR remain weaker mainly because their unconditional exceedance frequency is
+    still higher than desired.
+
+Overall, the non-overlapping analysis provides a cleaner diagnostic by reducing
+mechanical serial dependence from overlapping forward PnL construction.
 """
 
 
 
 
 # TODO: Modify for consistency issues.
-
 
 
 
