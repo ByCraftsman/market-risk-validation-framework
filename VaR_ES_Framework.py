@@ -5,6 +5,8 @@ import pandas as pd
 import datetime as dt
 import yfinance as yf
 import matplotlib.pyplot as plt
+from scipy.stats import norm
+
 years = 20
 end_date = dt.datetime.now()
 start_date = end_date - dt.timedelta(days = 365*years)
@@ -100,8 +102,6 @@ print(historical_VaR)
 
 
 #-----VaR Parametric Method-----
-from scipy.stats import norm
-
 def compute_parametric_VaR(log_returns, weights, value=1000000, horizon=5, confidence=0.99):
     cov_matrix = log_returns.cov()     # daily covariance
     portfolio_std = np.sqrt(weights.T @ cov_matrix @ weights) # T means Transpose.
@@ -533,7 +533,7 @@ This ensures:
 (due to rolling windows and horizon shifts, indices differ across series)
 """
 
-#Keep only timestamps where all VaR series and PnL are available
+# Keep only timestamps where all VaR series and PnL are available
 common_index = (
     historical_var_series.index
     .intersection(parametric_var_series.index)
@@ -653,7 +653,7 @@ Interpretation:
 
 
 
-#Traffic Light 
+#-----Traffic Light-----
 """
 Regulatory Approach (Traffic Light Approach):
     
@@ -1035,6 +1035,7 @@ mechanical serial dependence from overlapping forward PnL construction.
 
 
 
+#-----EWMA-----
 """
 Dynamic Volatility Extensios
 
@@ -1064,7 +1065,6 @@ Because λ is determined by data frequency, not VaR horizon. Since the model use
 λ=0.94 is appropriate. The 5-day VaR is obtained through square-root-of-time scaling.    
 """
 
-#-----EWMA-----
 def compute_ewma_volatility(returns, lam=0.94, init_window=60):
     ewma_var = np.full(len(returns), np.nan)
 
@@ -1124,15 +1124,25 @@ print("EWMA Violation Rate:", ewma_violations.mean())
 print("EWMA Average VaR:", ewma_var_series.mean())
 print("Worst 5-day Forward PnL:", ewma_pnl_test.min())
 
-#Kupiec & Traffic
+# Kupiec & Traffic Light
 ewma_kupiec_LR, ewma_kupiec_x = kupiec_test(ewma_var_series, ewma_pnl_test)
 traffic_ewma = traffic_light_rolling(ewma_var_series, ewma_pnl_test)
 print("EWMA Kupiec LR:", ewma_kupiec_LR)
 print(traffic_ewma["Zone"].value_counts())
 print(traffic_ewma["Violations"].mean())
 
+# Non-Overlapping
+ewma_var_nonoverlap, ewma_pnl_nonoverlap = make_non_overlapping_samples(
+    ewma_var_series, ewma_pnl_test, horizon=5, start=0
+)
+
+ewma_kupiec_LR_NO, ewma_kupiec_x_NO = kupiec_test(
+    ewma_var_nonoverlap, ewma_pnl_nonoverlap
+)
+
+print(ewma_kupiec_LR_NO, ewma_kupiec_x_NO)
 """
-Backtesting insight:
+EWMA Backtesting Interpretation:
 
 EWMA updates conditional volatility but still relies on a volatility-scaled normal framework, 
 which can materially underestimate multi-day tail risk in the presence of fat tails and stress dynamics.
@@ -1149,6 +1159,341 @@ This suggests that volatility updating alone is not sufficient to capture the
 true 5-day tail risk in the present dataset. In particular, EWMA fails to fully
 reflect fat tails, large jumps, and other distributional features of market stress.
 """
+
+
+
+
+#-----GARCH(1,1)-----
+"""
+GARCH is introduced as a more flexible conditional volatility model than EWMA.
+
+As with EWMA, the model is evaluated on the same basis as the previous VaR frameworks:
+- 5-day VaR horizon
+- 99% confidence level
+- same portfolio value
+- same forward 5-day realized PnL for backtesting
+
+To keep the comparison with EWMA transparent, GARCH first estimates 1-day
+conditional volatility, and the 5-day VaR is then obtained through
+square-root-of-time scaling.
+
+This version uses:
+- portfolio-level univariate GARCH(1,1)
+- zero conditional mean
+- normal innovations
+"""
+
+from arch import arch_model
+
+def compute_garch_volatility(returns, scale=100):
+    """
+    GARCH estimation is typically more numerically stable when returns are scaled.
+    The estimated conditional volatility is rescaled back to the original return units.
+    """
+    scaled_returns = returns * scale
+
+    model = arch_model(
+        scaled_returns,
+        mean='Zero',
+        vol='GARCH',
+        p=1,
+        q=1,
+        dist='normal'
+    )
+
+    result = model.fit(disp='off')
+
+    # Convert conditional volatility back to original return scale
+    garch_vol = result.conditional_volatility / scale
+
+    return pd.Series(garch_vol, index=returns.index), result
+
+
+def compute_garch_var_series(
+    returns,
+    value=1000000,
+    horizon=5,
+    confidence=0.99
+):
+    garch_vol, garch_result = compute_garch_volatility(returns)
+    z = norm.ppf(confidence)
+
+    # 5-day VaR via square-root-of-time scaling
+    garch_var_series = value * z * garch_vol * np.sqrt(horizon)
+
+    return garch_var_series, garch_vol, garch_result
+
+
+garch_var_series, garch_vol, garch_result = compute_garch_var_series(
+    portfolio_returns,
+    value=1000000,
+    horizon=5,
+    confidence=0.99
+)
+
+garch_var_series = garch_var_series.dropna()
+
+# Align GARCH VaR with the same forward 5-day PnL used in other models
+garch_common_index = common_index.intersection(garch_var_series.index)
+
+garch_var_series = garch_var_series.loc[garch_common_index]
+garch_pnl_test = forward_pnl.loc[garch_common_index]
+
+
+#GARCH results
+garch_violations = garch_pnl_test < -garch_var_series
+
+print("GARCH Violations:", garch_violations.sum())
+print("GARCH Violation Rate:", garch_violations.mean())
+print("GARCH Average VaR:", garch_var_series.mean())
+print("Worst 5-day Forward PnL:", garch_pnl_test.min())
+
+# Kupiec & Traffic Light
+garch_kupiec_LR, garch_kupiec_x = kupiec_test(garch_var_series, garch_pnl_test)
+traffic_garch = traffic_light_rolling(garch_var_series, garch_pnl_test)
+
+print("GARCH Kupiec LR:", garch_kupiec_LR)
+print(traffic_garch["Zone"].value_counts())
+print(traffic_garch["Violations"].mean())
+
+
+#-----Non-overlapping Sample-----
+garch_var_nonoverlap, garch_pnl_nonoverlap = make_non_overlapping_samples(
+    garch_var_series,
+    garch_pnl_test,
+    horizon=5,
+    start=0
+)
+
+garch_kupiec_LR_NO, garch_kupiec_x_NO = kupiec_test(
+    garch_var_nonoverlap,
+    garch_pnl_nonoverlap
+)
+
+garch_ind_lr, garch_trans = christoffersen_independence_test(
+    garch_var_nonoverlap,
+    garch_pnl_nonoverlap
+)
+
+garch_cc_lr = conditional_coverage_test(garch_kupiec_LR_NO, garch_ind_lr)
+
+print("GARCH Kupiec LR (Non-overlapping):", garch_kupiec_LR_NO)
+print("GARCH Violations (Non-overlapping):", garch_kupiec_x_NO)
+print("GARCH Independence LR:", garch_ind_lr)
+print("GARCH Transition Counts:", garch_trans)
+print("GARCH Conditional Coverage LR:", garch_cc_lr)
+
+"""
+GARCH Backtesting Interpretation:
+
+Relative to EWMA, the GARCH(1,1) model shows a meaningful improvement in backtesting performance.
+
+The observed violation rate declines from about 4.18% under EWMA to 3.43% under GARCH,
+while the Kupiec LR statistic falls from about 213.98 to 137.63.
+The average number of traffic-light violations per 250-day window also decreases
+from about 10.90 to 8.90.
+
+These results indicate that GARCH captures conditional volatility dynamics
+more effectively than the simpler EWMA specification.
+
+However, the model still performs poorly in absolute terms under a 99% VaR framework.
+At the 99% confidence level, the theoretical violation rate should be about 1%,
+whereas the observed GARCH violation rate remains much higher at 3.43%.
+
+This weakness is also confirmed on the non-overlapping sample,
+where the Kupiec LR remains elevated at about 20.79 with 23 violations,
+and the conditional coverage statistic is about 22.24.
+
+Overall, GARCH substantially improves on EWMA, but still fails to provide
+adequate tail coverage. This suggests that more flexible volatility dynamics help,
+but are not sufficient on their own. The remaining weakness likely stems not only
+from volatility modeling, but also from the distributional assumption itself,
+which motivates the next extension toward filtered historical simulation (FHS).
+"""
+
+
+
+
+#-----Filtered Historical Simulation (FHS)-----
+"""
+FHS combines dynamic volatility filtering with an empirical residual distribution.
+
+Step 1:
+    Estimate conditional volatility using GARCH(1,1)
+
+Step 2:
+    Standardize returns by the estimated volatility:
+        z_t = r_t / sigma_t
+
+Step 3:
+    Use the historical distribution of standardized residuals as the innovation distribution
+
+Step 4:
+    Re-scale the sampled residuals by the current conditional volatility forecast
+    to generate filtered future returns
+
+This allows the model to retain time-varying volatility dynamics while avoiding
+the strict normality assumption used in parametric VaR.
+"""
+
+def compute_standardized_residuals(returns, vol):
+    aligned = pd.DataFrame({
+        "returns": returns,
+        "vol": vol
+    }).dropna()
+
+    z = aligned["returns"] / aligned["vol"]
+    return z
+
+
+def rolling_fhs_var(
+    returns,
+    window=1000,
+    value=1000000,
+    horizon=5,
+    confidence=0.99,
+    simulations=2000,
+    scale=100
+):
+    var_list = []
+    index = []
+
+    for i in range(window, len(returns) - horizon):
+        sample_returns = returns.iloc[i-window:i]
+
+        # Fit GARCH on rolling sample
+        scaled_sample = sample_returns * scale
+        model = arch_model(
+            scaled_sample,
+            mean='Zero',
+            vol='GARCH',
+            p=1,
+            q=1,
+            dist='normal'
+        )
+        result = model.fit(disp='off')
+
+        # In-sample conditional volatility (back to original scale)
+        sigma_hist = result.conditional_volatility / scale
+        sigma_hist = pd.Series(sigma_hist, index=sample_returns.index)
+
+        # Historical standardized residuals
+        z_hist = compute_standardized_residuals(sample_returns, sigma_hist).dropna().values
+
+        # Forecast next-day conditional variance recursively
+        omega = result.params["omega"] / (scale**2)
+        alpha = result.params["alpha[1]"]
+        beta = result.params["beta[1]"]
+
+        last_sigma2 = (sigma_hist.iloc[-1])**2
+        last_return2 = (sample_returns.iloc[-1])**2
+
+        path_pnl = np.zeros(simulations)
+
+        for s in range(simulations):
+            sigma2_t = omega + alpha * last_return2 + beta * last_sigma2
+            pnl_path = 0.0
+
+            for h in range(horizon):
+                z_draw = np.random.choice(z_hist)
+                r_draw = np.sqrt(sigma2_t) * z_draw
+                pnl_path += value * r_draw
+
+                sigma2_t = omega + alpha * (r_draw**2) + beta * sigma2_t
+
+            path_pnl[s] = pnl_path
+
+        var_t = -np.percentile(path_pnl, (1 - confidence) * 100)
+
+        var_list.append(var_t)
+        index.append(returns.index[i])
+
+    return pd.Series(var_list, index=index)
+
+
+fhs_var_series = rolling_fhs_var(
+    portfolio_returns,
+    window=1000,
+    value=1000000,
+    horizon=5,
+    confidence=0.99,
+    simulations=2000
+)
+
+fhs_common_index = common_index.intersection(fhs_var_series.index)
+
+fhs_var_series = fhs_var_series.loc[fhs_common_index]
+fhs_pnl_test = forward_pnl.loc[fhs_common_index]
+
+
+
+
+#-----FHS Results-----
+fhs_violations = fhs_pnl_test < -fhs_var_series
+
+print("FHS Violations:", fhs_violations.sum())
+print("FHS Violation Rate:", fhs_violations.mean())
+print("FHS Average VaR:", fhs_var_series.mean())
+print("Worst 5-day Forward PnL:", fhs_pnl_test.min())
+
+# Kupiec & Traffic Light
+fhs_kupiec_LR, fhs_kupiec_x = kupiec_test(fhs_var_series, fhs_pnl_test)
+traffic_fhs = traffic_light_rolling(fhs_var_series, fhs_pnl_test)
+
+print("FHS Kupiec LR:", fhs_kupiec_LR)
+print(traffic_fhs["Zone"].value_counts())
+print(traffic_fhs["Violations"].mean())
+
+# Non-overlapping
+fhs_var_nonoverlap, fhs_pnl_nonoverlap = make_non_overlapping_samples(
+    fhs_var_series,
+    fhs_pnl_test,
+    horizon=5,
+    start=0
+)
+
+fhs_kupiec_LR_NO, fhs_kupiec_x_NO = kupiec_test(
+    fhs_var_nonoverlap,
+    fhs_pnl_nonoverlap
+)
+
+fhs_ind_lr, fhs_trans = christoffersen_independence_test(
+    fhs_var_nonoverlap,
+    fhs_pnl_nonoverlap
+)
+
+fhs_cc_lr = conditional_coverage_test(fhs_kupiec_LR_NO, fhs_ind_lr)
+
+print("FHS Kupiec LR (Non-overlapping):", fhs_kupiec_LR_NO)
+print("FHS Violations (Non-overlapping):", fhs_kupiec_x_NO)
+print("FHS Independence LR:", fhs_ind_lr)
+print("FHS Transition Counts:", fhs_trans)
+print("FHS Conditional Coverage LR:", fhs_cc_lr)
+
+"""
+FHS Backtesting Interpretation:
+
+FHS delivers the strongest backtesting performance among the volatility-based extensions considered so far.
+
+Relative to GARCH, the observed violation rate declines from about 3.43% to 2.08%,
+while the Kupiec LR statistic falls sharply from about 137.63 to 33.52.
+The average number of traffic-light violations per 250-day window also drops
+from about 8.90 under GARCH to 5.42 under FHS.
+
+These improvements suggest that combining dynamic volatility filtering with the
+empirical distribution of standardized residuals materially improves tail-risk measurement.
+
+The non-overlapping results are particularly important.
+The non-overlapping Kupiec LR falls to about 4.50, and the conditional coverage
+LR declines to about 5.03, both below the 99% rejection threshold of 6.63.
+This indicates that once overlap-induced dependence is reduced, FHS provides
+substantially better calibration than the normal-based dynamic volatility models.
+
+Overall, FHS appears to address a major weakness of the earlier models:
+volatility dynamics alone are not sufficient, and empirical tail behavior plays
+a central role in accurately measuring multi-day market risk.
+"""
+
 
 
 
