@@ -1035,11 +1035,6 @@ mechanical serial dependence from overlapping forward PnL construction.
 
 
 
-# TODO: Modify for consistency issues.
-
-
-
-
 """
 Dynamic Volatility Extensios
 
