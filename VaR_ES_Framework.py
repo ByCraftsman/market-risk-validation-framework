@@ -660,7 +660,7 @@ Regulatory Approach (Traffic Light Approach):
     The Basel Traffic Light framework classifies VaR models based on the
     number of exceedances over a fixed backtesting window (typically 250 days).    
 
-    Counts number of VaR violations over the sample.
+    Counts the number of VaR violations over the sample.
 
     Green  : ≤ 4 violations
     Yellow : 5–9 violations
@@ -671,14 +671,14 @@ Regulatory Approach (Traffic Light Approach):
 
     Violation:
         PnL(t) < -VaR(t)
-        
+
     Key Idea:
         
         Unlike statistical tests such as the Kupiec test, the Traffic Light approach
         does not rely on hypothesis testing or p-values.
         
-        Instead, it provides a simple rule-based classification that directly impacts
-        regulatory capital requirements.
+        Instead, it provides a simple rule-based classification that directly affects
+        regulatory capital treatment.
         
     Relationship with Kupiec Test:
 
@@ -687,7 +687,7 @@ Regulatory Approach (Traffic Light Approach):
     - Traffic Light provides regulatory action
 
 
-    Why include Traffic Light?:
+    Rationale for Inclusion:
 
     - It is the standard regulatory implementation of backtesting results
     - It translates statistical outcomes into capital penalties
@@ -1041,12 +1041,11 @@ mechanical serial dependence from overlapping forward PnL construction.
 
 
 """
-Dynamic Volatility Extension: EWMA
+Dynamic Volatility Extensios
 
-The static parametric and Monte Carlo models show weak tail coverage under
-backtesting. EWMA is introduced as a dynamic volatility extension to test
-whether time-varying volatility scaling improves VaR coverage relative to
-static volatility assumptions.
+The static parametric and Monte Carlo models show weak tail coverage under backtesting. 
+EWMA is introduced as a dynamic volatility extension to test whether time-varying volatility scaling 
+improves VaR coverage relative to static volatility assumptions.
 
 Importantly, EWMA is evaluated on the same basis as the previous models:
 - 5-day VaR horizon
@@ -1070,44 +1069,91 @@ Because λ is determined by data frequency, not VaR horizon. Since the model use
 λ=0.94 is appropriate. The 5-day VaR is obtained through square-root-of-time scaling.    
 """
 
-
 #-----EWMA-----
-def compute_ewma_volatility(returns, lam=0.94):
-    ewma_var = np.zeros(len(returns))
-    ewma_var[0] = returns.var() 
+def compute_ewma_volatility(returns, lam=0.94, init_window=60):
+    ewma_var = np.full(len(returns), np.nan)
 
-    for t in range(1, len(returns)):
+    # seed variance using an initial subsample
+    ewma_var[init_window - 1] = returns.iloc[:init_window].var()
+
+    for t in range(init_window, len(returns)):
         ewma_var[t] = lam * ewma_var[t-1] + (1 - lam) * returns.iloc[t-1]**2
 
-    ewma_vol = np.sqrt(ewma_var)
-    return pd.Series(ewma_vol, index=returns.index)
+    return pd.Series(np.sqrt(ewma_var), index=returns.index)
 
-def compute_ewma_var(returns, value=1000000, horizon=1, confidence=0.99, lam=0.94):
-    ewma_vol = compute_ewma_volatility(returns, lam)
+def compute_ewma_var_series(
+    returns,
+    value=1000000,
+    horizon=5,
+    confidence=0.99,
+    lam=0.94,
+    init_window=60
+):
+    ewma_vol = compute_ewma_volatility(
+        returns,
+        lam=lam,
+        init_window=init_window
+    )
 
     z = norm.ppf(confidence)
 
-    ewma_var_series = value * ewma_vol * z * np.sqrt(horizon)
+    # 5-day VaR via square-root-of-time scaling
+    ewma_var_series = value * z * ewma_vol * np.sqrt(horizon)
 
     return ewma_var_series, ewma_vol
 
-ewma_VaR_series, ewma_vol = compute_ewma_var(portfolio_returns)
-daily_portfolio_PNL = portfolio_returns*1000000
+ewma_var_series, ewma_vol = compute_ewma_var_series(
+    portfolio_returns,
+    value=1000000,
+    horizon=5,
+    confidence=0.99,
+    lam=0.94,
+    init_window=60
+)
 
-def ewma_violations(pnl):
-    aligned_var = ewma_VaR_series.loc[pnl.index]
-    return pnl < -aligned_var
+ewma_var_series = ewma_var_series.dropna()
 
-ewma_violations = ewma_violations(daily_portfolio_PNL) 
+# Align EWMA VaR with the same forward 5-day PnL used in other models
+ewma_common_index = common_index.intersection(ewma_var_series.index)
 
-#result
-print("Violations:", ewma_violations.sum())
-print("Violation rate:", ewma_violations.mean())
-print(ewma_VaR_series.mean())
-print(daily_portfolio_PNL.min())
+ewma_var_series = ewma_var_series.loc[ewma_common_index]
+ewma_pnl_test = forward_pnl.loc[ewma_common_index]
 
 
+# Violation indicator
+ewma_violations = ewma_pnl_test < -ewma_var_series
 
+#EWMA results
+print("EWMA Violations:", ewma_violations.sum())
+print("EWMA Violation Rate:", ewma_violations.mean())
+print("EWMA Average VaR:", ewma_var_series.mean())
+print("Worst 5-day Forward PnL:", ewma_pnl_test.min())
+
+#Kupiec & Traffic
+ewma_kupiec_LR, ewma_kupiec_x = kupiec_test(ewma_var_series, ewma_pnl_test)
+traffic_ewma = traffic_light_rolling(ewma_var_series, ewma_pnl_test)
+print("EWMA Kupiec LR:", ewma_kupiec_LR)
+print(traffic_ewma["Zone"].value_counts())
+print(traffic_ewma["Violations"].mean())
+
+"""
+Backtesting insight:
+
+EWMA updates conditional volatility but still relies on a volatility-scaled normal framework, 
+which can materially underestimate multi-day tail risk in the presence of fat tails and stress dynamics.
+
+Its average VaR is lower than not only Historical VaR but also the static
+Parametric and Monte Carlo VaR estimates, which leads to an excessive number
+of violations.
+
+The traffic-light results are particularly unfavorable, with the model spending
+most of the time in the red zone and producing an average of about 10.9
+violations per 250-day window.
+
+This suggests that volatility updating alone is not sufficient to capture the
+true 5-day tail risk in the present dataset. In particular, EWMA fails to fully
+reflect fat tails, large jumps, and other distributional features of market stress.
+"""
 
 
 
