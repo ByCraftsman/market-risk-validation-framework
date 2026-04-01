@@ -1,11 +1,10 @@
-# Work in progress: VaR/ES risk framework under active development
-
 import numpy as np
 import pandas as pd
 import datetime as dt
 import yfinance as yf
 import matplotlib.pyplot as plt
 from scipy.stats import norm
+from arch import arch_model
 
 years = 20
 end_date = dt.datetime.now()
@@ -59,19 +58,15 @@ prices = fetch_prices(tickers, start_date, end_date)
    focuses on market risk only.)
 """
 
-
-
+weights = np.array([1/len(tickers)]*len(tickers))
 
 def compute_log_returns(price_df):
     
-    returns = np.log(price_df / price_df.shift(1)) # shift represents the previous time step in the time series
+    returns = np.log(price_df / price_df.shift(1)) 
     
     return returns.dropna()
 
 log_returns = compute_log_returns(prices)
-
-
-weights = np.array([1/len(tickers)]*len(tickers))
 
 def compute_portfolio_returns(log_returns, weights):
     
@@ -87,15 +82,12 @@ def compute_rolling_pnl(returns, value, horizon):
     rolling = returns.rolling(horizon).sum().dropna()
     return rolling * value
 
-
 def compute_historical_VaR(pnl, confidence):
     return -np.percentile(pnl, (1 - confidence) * 100)
-
 
 rolling_pnl = compute_rolling_pnl(portfolio_returns, 1000000, 5)
 historical_VaR = compute_historical_VaR(rolling_pnl, 0.99)
 
-print(rolling_pnl)
 print(historical_VaR)
 
 
@@ -106,18 +98,17 @@ def compute_parametric_VaR(log_returns, weights, value=1000000, horizon=5, confi
     cov_matrix = log_returns.cov()     # daily covariance
     portfolio_std = np.sqrt(weights.T @ cov_matrix @ weights) # T means Transpose.
     
-    var = (
+    para_var = (
           value
         * portfolio_std
-        * norm.ppf(confidence) # This is Inverse CDF (quantile). Returns the z-score for the given confidence level.
+        * norm.ppf(confidence) # PPF (percent point function) is the inverse of the CDF.
         * np.sqrt(horizon)
           )
     
-    return var, portfolio_std
+    return portfolio_std , para_var
 
-parametric_VaR, portfolio_std = compute_parametric_VaR(log_returns, weights)
+portfolio_std, parametric_VaR = compute_parametric_VaR(log_returns, weights)
 
-print(portfolio_std)
 print(parametric_VaR)
 
 
@@ -137,7 +128,7 @@ def compute_monte_carlo_VaR(log_returns, weights, value=1000000, horizon=5, conf
     )
 
     portfolio_sim_returns = simulated_returns @ weights
-    # Scale returns to T-day horizon (variance scales with time → std scales with sqrt(T))
+    # Scale returns to T-day horizon (variance scales with time -> std scales with sqrt(T))
     # *= is the Compound Assignment Operator that means a = a * b
     portfolio_sim_returns *= np.sqrt(horizon)
     scenario_pnl = value * portfolio_sim_returns
@@ -150,86 +141,17 @@ scenario_pnl, monte_carlo_VaR = compute_monte_carlo_VaR(log_returns, weights)
 print(monte_carlo_VaR)
 
 """
-Monte Carlo VaR is similar to Parametric VaR.
+Monte Carlo VaR is often close to Parametric VaR when returns are
+simulated under multivariate normality.
 
-This similarity arises because when returns are assumed to follow a multivariate normal distribution,
+Because both methods rely on the same volatility-covariance structure,
+their VaR estimates are typically similar under this assumption.
 
-    Parametric VaR ≈ Monte Carlo VaR
+The gap widens when Monte Carlo simulation incorporates features such as:
 
-as both methods rely on the same distributional assumption.
-
-However, differences arise when:
-    
-    • non-normal distributions are used
-    • stochastic volatility is introduced
-    • fat tails or skewness are modeled
-"""
-
-
-
-
-#-----Simulation Convergence Insight-----
-simulation_sizes = [500, 3000, 10000, 50000]
-results = []
-
-for n in simulation_sizes:
-    _, var_estimate = compute_monte_carlo_VaR(
-        log_returns, weights, simulations=n
-    )
-    results.append(var_estimate)
-
-mc_convergence = pd.DataFrame({
-    "Simulations": simulation_sizes,
-    "Monte Carlo VaR": results
-})
-
-print(mc_convergence)
-
-"""
-Monte Carlo VaR estimates stabilize as the number of simulations increases.
-The difference between 10,000 and 50,000 simulations is less than 1%,
-indicating that 10,000 simulations provide sufficient accuracy for practical risk measurement.
-
-This suggests that smaller simulation sizes may lead to unstable tail estimates,
-while larger samples improve the reliability of risk measurement.
-"""
-
-
-
-
-#-----VaR Distribution Plots-----
-def generate_parametric_pnl(std, value, horizon, simulations=10000):
-    simulated_returns = np.random.normal(0, std * np.sqrt(horizon), simulations) # Rt ~ N(0, σ²T)
-    return simulated_returns * value
-
-parametric_pnl = generate_parametric_pnl(portfolio_std, 1000000, 5)
-
-
-def plot_VaR_distribution(data, var_value, title, xlim=None, ylim=None): # Optional axis limits allow consistent scaling across plots when needed.
-    plt.figure()
-    plt.hist(data, bins=100, density=True)
-    plt.axvline(-var_value, linestyle='dashed', linewidth=1, label='VaR')
-    plt.xlabel('PnL')
-    plt.ylabel('Density')
-    plt.title(title)
-    plt.legend()
-
-    if xlim:
-        plt.xlim(xlim)
-    if ylim:
-        plt.ylim(ylim)
-
-tail_xlim = (-80000, 80000)
-
-plot_VaR_distribution(rolling_pnl, historical_VaR, 'Historical VaR', tail_xlim)
-plot_VaR_distribution(parametric_pnl, parametric_VaR, 'Parametric VaR', tail_xlim)
-plot_VaR_distribution(scenario_pnl, monte_carlo_VaR, 'Monte Carlo VaR', tail_xlim)
-
-"""
-The parametric and Monte Carlo distributions appear narrower (lower standard deviation)
-than the historical distribution. This is expected because the simulations assume a
-multivariate normal distribution, which fails to capture the fat tails observed in
-real market data, potentially leading to an underestimation of tail risk.
+    - non-normal return distributions
+    - stochastic volatility
+    - fat tails or skewness
 """
 
 
@@ -245,52 +167,135 @@ print(VaR_summary)
 
 
 
-#-----Expected Shortfall-----
+#-----Simulation Convergence Insight-----
+simulation_sizes = [500, 3000, 10000, 50000]
+mc_var_estimates = []
+
+for n in simulation_sizes:
+    _, var_estimate = compute_monte_carlo_VaR(
+        log_returns, weights, simulations=n
+    )
+    mc_var_estimates.append(var_estimate)
+
+mc_convergence = pd.DataFrame({
+    "Simulations": simulation_sizes,
+    "Monte Carlo VaR": mc_var_estimates
+})
+
+print(mc_convergence)
 
 """
-Expected Shortfall (ES) measures the average loss beyond VaR.
+Monte Carlo VaR estimates become more stable as the number of simulations increases.
+
+In this setup, the difference between 10,000 and 50,000 simulations is small,
+suggesting that 10,000 simulations provide a reasonable balance between
+computational efficiency and estimation stability.
+
+Smaller simulation sizes may produce noisier tail estimates, while larger
+simulation sizes generally improve the reliability of risk measurement.
+"""
+
+
+
+
+#-----VaR Distribution Plots-----
+def generate_parametric_pnl(std, value, horizon, simulations=10000):
+    # Simulated PnL used only for visual comparison
+    simulated_returns = np.random.normal(0, std * np.sqrt(horizon), simulations)  
+
+    return simulated_returns * value
+
+parametric_pnl = generate_parametric_pnl(portfolio_std, 1000000, 5)
+
+
+def plot_VaR_distribution(data, var_value, title, xlim=None, ylim=None):
+    plt.figure()
+    plt.hist(data, bins=100, density=True)
+    plt.axvline(-var_value, linestyle='dashed', linewidth=1, label='VaR')
+    plt.xlabel('PnL')
+    plt.ylabel('Density')
+    plt.title(title)
+    plt.legend()
+
+    if xlim is not None:
+        plt.xlim(xlim)
+    if ylim is not None:
+        plt.ylim(ylim)
+
+tail_xlim = (-80000, 80000)
+
+plot_VaR_distribution(rolling_pnl, historical_VaR, 'Historical VaR', tail_xlim)
+plot_VaR_distribution(parametric_pnl, parametric_VaR, 'Parametric VaR', tail_xlim)
+plot_VaR_distribution(scenario_pnl, monte_carlo_VaR, 'Monte Carlo VaR', tail_xlim)
+
+"""
+The parametric and Monte Carlo distributions appear more concentrated than the
+historical distribution. This reflects the normality assumption imposed in the
+simulated frameworks, which tends to smooth extreme outcomes and underrepresent
+the heavier tails present in realized market data.
+
+As a result, normal-based models may underestimate tail risk relative to the
+historical distribution.
+"""
+
+
+
+
+#-----Expected Shortfall-----
+"""
+Expected Shortfall (ES) measures the average loss conditional on losses
+exceeding the VaR threshold.
 
     Definition:
-    
+
         ES_α = -E[X | X ≤ -VaR_α]
 
-    For normal distribution:
-   
-        ES = V * σ * φ(z_α) / (1 - α) * sqrt(h)
+For a normal distribution:
+
+    ES = V * σ * φ(z_α) / (1 - α) * sqrt(h)
 
 where:
-- φ(z): standard normal PDF
-- z_α: quantile at confidence level α
+- φ(z_α): standard normal PDF evaluated at z_α
+- z_α: standard normal quantile at confidence level α
 
+Key intuition:
 
-While VaR answers:
-   "What loss level will not be exceeded with X% confidence?"
+- VaR identifies the minimum loss level within the tail at a given confidence level.
+- ES measures the average loss once that tail threshold has been breached.
+- Therefore, ES captures the severity of tail losses more directly than VaR.
 
-ES answers:
-   "If losses exceed VaR, how large are they on average?"
+Why ES is greater than VaR:
 
-ES is a coherent risk measure and captures tail risk better than VaR.
+- VaR is a cutoff point for tail losses.
+- ES is the average of losses beyond that cutoff.
+- Since ES averages only losses that are at least as extreme as VaR,
+  ES must be greater than or equal to VaR.
+
+For this reason, ES is generally viewed as a more informative measure of
+tail risk than VaR.
 """
 
-his_ES = -rolling_pnl[rolling_pnl <= -historical_VaR].mean()
+value = 1000000
+horizon = 5
+confidence = 0.99
 
-z = norm.ppf(0.99)
+historical_ES = -rolling_pnl[rolling_pnl <= -historical_VaR].mean()
+
+z = norm.ppf(confidence)
 pdf_z = norm.pdf(z)
-para_ES = (
-    1000000
+parametric_ES = (
+    value
     * portfolio_std
-    * (pdf_z / (1 - 0.99)) # Tail conditional expectation term
-    * np.sqrt(5)
+    * (pdf_z / (1 - confidence))  # Tail conditional expectation term
+    * np.sqrt(horizon)
 )
 
-mc_ES = -scenario_pnl[scenario_pnl <= -monte_carlo_VaR].mean()
-
-
+monte_carlo_ES = -scenario_pnl[scenario_pnl <= -monte_carlo_VaR].mean()
 
 
 #-----ES Summary-----
 ES_summary = pd.DataFrame({
-    "ES": [his_ES, para_ES, mc_ES]
+    "ES": [historical_ES, parametric_ES, monte_carlo_ES]
 }, index=["Historical", "Parametric", "Monte Carlo"])
 
 print(ES_summary)
@@ -300,107 +305,63 @@ print(ES_summary)
 
 #-----Backtesting Methodologies-----
 """
-Backtesting methodologies for Value-at-Risk (VaR) models are generally grouped into
-four categories:
+Backtesting methodologies for Value-at-Risk (VaR) models can be grouped into
+four broad categories:
 
 1. Coverage Tests
     Coverage tests evaluate whether the observed frequency of VaR exceedances
-    matches the expected rate implied by the confidence level.
+    matches the expected violation rate implied by the confidence level.
 
     Example:
-       
     - Kupiec Unconditional Coverage Test
 
-    Purpose:
-       
-    Ensures the model produces the correct proportion of tail losses.
-
     Limitation:
-       
-    Does not detect clustering of violations.
+    - Does not detect clustering of violations
 
 
 2. Independence Tests
-    Independence tests assess whether VaR violations occur independently over time.
+    Independence tests evaluate whether VaR violations occur independently
+    over time.
 
     Example:
-       
     - Christoffersen Independence Test
 
-    Why is this necessary?
-
-    A model may produce the correct violation frequency but still be inadequate if
-    violations cluster during periods of market stress. Clustering indicates that
-    the model fails to capture volatility dynamics (e.g., volatility clustering).
-
-    Kupiec test only answers:
-       
-        "Is the violation rate correct?"
-
-    Independence test answers:
-       
-        "Are violations randomly distributed over time?"
-
-    Detecting clustering is crucial because persistent violations imply that risk
-    is systematically underestimated during turbulent periods.
+    Role:
+    - Detects whether violations are randomly distributed or clustered
 
 
 3. Conditional Coverage Tests
-    Conditional coverage tests jointly evaluate both correct coverage and independence.
+    Conditional coverage tests jointly assess both coverage accuracy and
+    independence of violations.
 
     Example:
-       
     - Christoffersen Conditional Coverage Test
 
-    Why use conditional coverage?
 
-    A robust VaR model must satisfy BOTH:
-       
-        Correct exceedance frequency
-        Independence of violations
-
-    Conditional coverage provides a comprehensive assessment by combining both criteria.
-
-
-4. Distribution Tests (Not implemented here)
-
-    Distribution tests evaluate whether the entire forecast loss distribution
-    matches the realized loss distribution.
+4. Distribution Tests (not implemented here)
+    Distribution tests evaluate whether the full forecast loss distribution
+    matches realized losses.
 
     Examples:
-       
     - Berkowitz test
-    - Kolmogorov–Smirnov test
-    - Anderson–Darling test
+    - Kolmogorov-Smirnov test
+    - Anderson-Darling test
 
-    Why are distribution tests not used here?:
-       
-    - They require full density forecasts, not just VaR quantiles.
-    - Regulatory frameworks (e.g., Basel) focus primarily on exceedance behavior.
-    - VaR is a quantile-based risk measure; therefore, exceedance tests are more directly aligned with its objective.
+    Note:
+    - These tests require full distributional forecasts rather than only
+      VaR quantiles
 
 
+Regulatory Perspective
 
+    In this framework, the main focus is on exceedance-based backtesting.
 
-Regulatory Perspective (Basel Framework)
-
-    The Basel Committee emphasizes exceedance-based backtesting because:
-    
-    - Capital requirements depend on tail loss quantiles (VaR/ES).
-    - The primary regulatory concern is whether extreme losses are underestimated.
-    - Coverage and independence directly assess model reliability in tail risk.
-    - Distribution tests provide broader diagnostics but are not essential for regulatory capital validation.
-
-In practice, regulators prioritize:
-    
-    - Coverage (Kupiec)
-    - Independence (Christoffersen)
+    The most relevant tests are:
+    - Coverage
+    - Independence
     - Conditional Coverage
 
-These tests ensure that the model is reliable in estimating extreme losses,
-which is the core objective of market risk regulation.
-
-These exceedance tests form the basis of regulatory frameworks such as the Basel traffic light approach.
+These tests form the basis for regulatory interpretations such as the Basel traffic light approach.
 """
 
 
@@ -409,36 +370,35 @@ These exceedance tests form the basis of regulatory frameworks such as the Basel
 """
 VaR Backtesting Core Principle
 
-We compare:
+Backtesting compares:
 
     VaR(t)  vs  PnL(t)
 
-Where:
+where:
 
-    VaR(t) = risk forecast using information available up to time t
-    PnL(t) = realized PnL from t to t+horizon
+    VaR(t) = risk forecast based on information available at time t
+    PnL(t) = realized PnL over the next holding period
 
 Therefore:
 
-    - rolling (backward) PnL is used to estimate historical rolling VaR
-    - forward PnL is used for backtesting, because it represents the realized
-      future loss after the VaR forecast is made
+    - rolling (backward-looking) PnL is used to estimate historical rolling VaR
+    - forward PnL is used for backtesting because it represents the realized
+      outcome after the VaR forecast is made
 
 The forward PnL series is also used for index alignment so that each VaR forecast
 is matched with the realized PnL over the same forecast origin.
 """
 
-
 def compute_forward_pnl(returns, value, horizon):
 
-    # future horizon return
-    future_returns = returns.rolling(horizon).sum().shift(-horizon+1)
+    # Future cumulative return over the holding period
+    future_returns = returns.rolling(horizon).sum().shift(-horizon + 1)
 
     pnl = future_returns * value
 
     return pnl.dropna()
 
-# forward_pnl shifts the horizon forward so that each timestamp represents the realized future PnL used for backtesting.
+# Each timestamp is aligned to the future realized PnL used for backtesting.
 forward_pnl = compute_forward_pnl(portfolio_returns, 1000000, 5)
 
 
@@ -452,7 +412,6 @@ def rolling_historical_VaR(pnl_series, window=1000, confidence=0.99):
     for i in range(window, len(pnl_series)):
 
         pnl_sample = pnl_series.iloc[i-window:i]
-
         var = compute_historical_VaR(pnl_sample, confidence)
 
         var_list.append(var)
@@ -475,8 +434,8 @@ def rolling_parametric_VaR(log_returns, weights, window=1000,
 
         sample_returns = log_returns.iloc[i-window:i]
 
-        #We do not need Potfolio std
-        var, _ = compute_parametric_VaR(
+        # Portfolio standard deviation is not needed here
+        _, var = compute_parametric_VaR(
             sample_returns,
             weights,
             value=value,
@@ -504,7 +463,7 @@ def rolling_mc_VaR(log_returns, weights, window=1000,
 
         sample_returns = log_returns.iloc[i-window:i]
 
-        #We do not need Scenario pnl
+        # Simulated scenario PnL is not needed here
         _, var = compute_monte_carlo_VaR(
             sample_returns,
             weights,
@@ -524,16 +483,17 @@ mc_var_series = rolling_mc_VaR(log_returns, weights)
 
 
 """
-We must align all time series to a common index
-    
-This ensures:
+All VaR series and the forward PnL series must be aligned to a common index.
 
-    VaR(t) is compared with PnL(t) at the SAME timestamp
+This ensures that:
 
-(due to rolling windows and horizon shifts, indices differ across series)
+    VaR(t) is compared with PnL(t) at the same forecast origin
+
+Because rolling windows and horizon shifts generate slightly different index
+ranges across series, only the overlapping timestamps are retained.
 """
 
-# Keep only timestamps where all VaR series and PnL are available
+# Keep only timestamps where all VaR series and forward PnL are available
 common_index = (
     historical_var_series.index
     .intersection(parametric_var_series.index)
@@ -541,7 +501,7 @@ common_index = (
     .intersection(forward_pnl.index)
 )
 
-# Align all series to the same index for 1:1 comparison
+# Align all series for 1:1 backtesting comparison
 historical_var_series = historical_var_series.loc[common_index]
 parametric_var_series = parametric_var_series.loc[common_index]
 mc_var_series = mc_var_series.loc[common_index]
@@ -552,25 +512,25 @@ pnl_test = forward_pnl.loc[common_index]
 
 #-----Important Notes-----
 """
-The framework is built around a 5-day VaR horizon to reflect holding-period risk.
-However, in rolling backtesting, 5-day forward PnL constructed using overlapping
-windows may induce artificial serial dependence in VaR violations.
+The framework uses a 5-day VaR horizon to reflect holding-period risk.
+However, 5-day forward PnL constructed with overlapping windows may induce
+mechanical serial dependence in VaR violations.
 
-To ensure a more reliable interpretation, different backtesting metrics are
-evaluated on different samples:
-    
+To address this, different backtesting metrics are evaluated on different samples:
+
     - Kupiec and traffic-light results are evaluated on the full overlapping sample,
-      as they primarily assess violation frequency.
+      since they primarily focus on violation frequency.
 
-    - For independence analysis, a non-overlapping 5-day sample is constructed to
-      mitigate the impact of overlapping observations.
+    - Independence tests are evaluated on a non-overlapping 5-day sample to reduce
+      overlap-induced dependence.
 
-    - Accordingly, the Kupiec test is also recomputed on the non-overlapping sample
-      so that conditional coverage (CC) tests are based on a consistent dataset.
+    - The Kupiec test is also recomputed on the non-overlapping sample so that
+      conditional coverage (CC) results are based on the same dataset.
 
-This separation allows frequency and independence effects to be interpreted
-without distortion from overlapping-window construction.
+This separation helps distinguish frequency effects from dependence effects in
+backtesting results.
 """
+
 
 
 
@@ -598,7 +558,7 @@ def kupiec_test(var, pnl, confidence=0.99):
     n = len(pnl)
     p = 1 - confidence
     
-    #Prevent log(0) by bounding the observed violation probability (p_hat)
+    # Prevent log(0) by bounding the observed violation probability (p_hat)
     eps = 1e-10
     p_hat = x / n
     p_hat = max(min(p_hat, 1 - eps), eps)
@@ -646,7 +606,7 @@ Interpretation:
     In contrast, both parametric and Monte Carlo VaR models exhibit excessive
     violations, indicating systematic underestimation of tail risk.
     
-    This is likely due to distributional assumptions (e.g., normality).
+    This is likely related to distributional assumptions such as normality,
     which fail to capture fat tails and extreme market movements.
 """
 
@@ -778,20 +738,126 @@ Overall:
 
 
 
-#-----Non-overlapping samples-----
+#-----Traffic Light-----
+"""
+Basel Traffic Light Approach
+
+The Basel traffic light framework classifies VaR model performance based on
+the number of exceedances observed within a fixed rolling backtesting window
+(typically 250 observations).
+
+Classification rule:
+
+    Green  : ≤ 4 violations
+    Yellow : 5–9 violations
+    Red    : ≥ 10 violations
+
+Requirement:
+    PnL must be forward-looking and properly aligned with VaR forecasts.
+
+Violation condition:
+    PnL(t) < -VaR(t)
+
+Unlike statistical tests such as the Kupiec test, the traffic light approach
+is rule-based rather than hypothesis-based.
+
+Both methods evaluate exceedance frequency, but their roles differ:
+    - Kupiec test provides statistical evidence
+    - Traffic light provides a regulatory-style classification
+"""
+
+def traffic_light_rolling(var, pnl, window=250):
+
+    zones = []
+    counts = []
+    index_list = []
+
+    for i in range(window, len(var)):
+        var_window = var.iloc[i - window:i]
+        pnl_window = pnl.iloc[i - window:i]
+
+        violations = (pnl_window < -var_window).sum()
+
+        if violations <= 4:
+            zone = "Green"
+        elif violations <= 9:
+            zone = "Yellow"
+        else:
+            zone = "Red"
+
+        zones.append(zone)
+        counts.append(violations)
+        index_list.append(var.index[i])
+
+    return pd.DataFrame({
+        "Violations": counts,
+        "Zone": zones
+    }, index=index_list)
+
+traffic_hist = traffic_light_rolling(historical_var_series, pnl_test)
+traffic_para = traffic_light_rolling(parametric_var_series, pnl_test)
+traffic_mc = traffic_light_rolling(mc_var_series, pnl_test)
+
+def summarize_traffic(df):
+    return df["Zone"].value_counts().reindex(
+        ["Green", "Yellow", "Red"],
+        fill_value=0
+    )
+
+traffic_summary = pd.DataFrame({
+    "Historical": summarize_traffic(traffic_hist),
+    "Parametric": summarize_traffic(traffic_para),
+    "Monte Carlo": summarize_traffic(traffic_mc)
+})
+
+traffic_summary_ratio = traffic_summary.div(traffic_summary.sum())
+
+traffic_violations_avg = pd.DataFrame({
+    "Historical": traffic_hist["Violations"].mean(),
+    "Parametric": traffic_para["Violations"].mean(),
+    "Monte Carlo": traffic_mc["Violations"].mean()
+}, index=["Avg Violations"])
+
+print(traffic_summary)
+print(traffic_summary_ratio)
+print(traffic_violations_avg)
+
+"""
+Traffic Light Results Interpretation:
+    
+                Historical  Parametric  Monte Carlo
+Avg Violations    2.710744    5.838131     5.980621
+
+Historical VaR spends most of the time in the green zone, with an average
+violation count close to the benchmark implied by a 99% VaR model over a
+250-day window.
+
+By contrast, Parametric and Monte Carlo VaR spend a larger share of time in
+the yellow and red zones, with higher average violation counts.
+
+Overall, the traffic light results indicate that Historical VaR is more
+robust in this framework, while Parametric and Monte Carlo VaR tend to
+underestimate tail risk under static normality-based assumptions.
+"""
+
+
+
+
+
+#-----Non-overlapping Sample Construction-----
 """
 Because the 5-day forward PnL is constructed using overlapping windows,
 consecutive violations may exhibit mechanical serial dependence.
 
-To avoid overstating violation clustering, Christoffersen independence and
-conditional coverage tests are additionally evaluated using a non-overlapping
+To reduce overlap-induced dependence, Christoffersen independence and
+conditional coverage tests are additionally evaluated on a non-overlapping
 5-day sample.
 
-start=0 is chosen for simplicity. Different starting offsets may produce
-slightly different results.
+The starting offset is set to 0 for simplicity. Alternative offsets may
+produce slightly different results.
 """
 
-def make_non_overlapping_samples(var, pnl, horizon=5, start=0):
+def make_non_overlapping_sample(var, pnl, horizon=5, start=0):
     paired = pd.DataFrame({
         "VaR": var,
         "PnL": pnl
@@ -801,14 +867,18 @@ def make_non_overlapping_samples(var, pnl, horizon=5, start=0):
 
     return sampled["VaR"], sampled["PnL"]
 
-hist_var_nonoverlap, hist_pnl_nonoverlap = make_non_overlapping_samples(
-                                           historical_var_series, pnl_test, horizon=5, start=0)
 
-para_var_nonoverlap, para_pnl_nonoverlap = make_non_overlapping_samples(
-                                           parametric_var_series, pnl_test, horizon=5, start=0)
+hist_var_nonoverlap, hist_pnl_nonoverlap = make_non_overlapping_sample(
+    historical_var_series, pnl_test, horizon=5, start=0
+)
 
-mc_var_nonoverlap, mc_pnl_nonoverlap = make_non_overlapping_samples(
-                                       mc_var_series, pnl_test, horizon=5, start=0)
+para_var_nonoverlap, para_pnl_nonoverlap = make_non_overlapping_sample(
+    parametric_var_series, pnl_test, horizon=5, start=0
+)
+
+mc_var_nonoverlap, mc_pnl_nonoverlap = make_non_overlapping_sample(
+    mc_var_series, pnl_test, horizon=5, start=0
+)
 
 
 
@@ -827,99 +897,74 @@ kupiec_nonoverlap_results = pd.DataFrame({
 print(kupiec_nonoverlap_results)
 
 """
-Kupiec Test Comparison
+Kupiec Test Comparison:
 
-Overlapping sample:
+The non-overlapping sample is used to evaluate unconditional coverage on a
+dataset that is more consistent with the independence and conditional coverage
+tests.
 
-    Historical VaR:
-        LR ≈ 0.1529, violations = 40
+Compared with the overlapping sample, the non-overlapping specification reduces
+the mechanical dependence induced by overlapping 5-day forward PnL construction.
 
-        -> Violation frequency remains close to the theoretical expectation,
-           indicating broadly acceptable unconditional coverage.
+Interpretation:
 
-    Parametric / Monte Carlo VaR:
-        LR ≈ 44.4918, violations = 85
+    - Historical VaR remains the best-calibrated model under both specifications.
 
-        -> Exceedances are far above expectation, indicating substantial
-           underestimation of tail risk.
+    - Parametric and Monte Carlo VaR continue to show weaker unconditional
+      coverage, indicating that tail risk is still underestimated.
 
-Non-overlapping sample:
-
-    Historical VaR:
-        LR ≈ 0.0372, violations = 7
-
-        -> Coverage remains well calibrated after overlap effects are removed.
-
-    Parametric / Monte Carlo VaR:
-        LR ≈ 3.3124, violations = 13
-
-        -> Coverage improves materially relative to the overlapping sample.
-           The exceedance frequency is still somewhat high, but the LR statistic
-           no longer indicates strong rejection at the 99% level.
-
-Overall:
-
-    Historical VaR remains the best-calibrated model.
-    Parametric and Monte Carlo VaR remain weaker, especially on the full
-    overlapping sample, where tail losses are clearly underestimated.
+    - The comparison between overlapping and non-overlapping results helps
+      distinguish pure coverage performance from overlap-related effects in
+      backtesting.
 """
 
 
 
 
-#-----Christoffersen Independence Test-----
+#-----Christoffersen Independence Likelihood Ratio (LR) Test-----
 """
-Christoffersen Independence Likelihood Ratio (LR) Test
-
-The LR statistic for testing independence of VaR violations is defined as:
-
-LR_ind = -2 ln [
-    ((1 − π)^(n00 + n10) * π^(n01 + n11)) /
-    ((1 − π01)^(n00) * π01^(n01) * (1 − π11)^(n10) * π11^(n11))
-]
+The independence test evaluates whether VaR violations occur independently
+over time by comparing the observed transition structure of violations with
+the structure implied under independence.
 
 Transition probabilities:
 
-π01 = n01 / (n00 + n01)     π11 = n11 / (n10 + n11)
-π   = (n01 + n11) / (n00 + n01 + n10 + n11)
+    π01 = n01 / (n00 + n01)
+    π11 = n11 / (n10 + n11)
+    π   = (n01 + n11) / (n00 + n01 + n10 + n11)
 
 Transition counts:
 
-n00 : no violation → no violation
-n01 : no violation → violation
-n10 : violation → no violation
-n11 : violation → violation
+    n00 : no violation → no violation
+    n01 : no violation → violation
+    n10 : violation → no violation
+    n11 : violation → violation
 
 Hypotheses:
 
-H₀: π01 = π11 = π   (violations are independent over time)
-H₁: π01 ≠ π11       (violation clustering exists)
+    H0: π01 = π11 = π   (violations are independent over time)
+    H1: π01 ≠ π11       (violations exhibit dependence)
 
-Under H₀:
-LR_ind ~ χ²(1)
+Under H0:
+    LR_ind ~ χ²(1)
 
-Decision Rule:
-    Reject H0 if LR_ind > 6.63  (at 99% confidence level, df = 1)
-    
-    
-Because 5-day forward PnL is constructed using overlapping windows, consecutive
-violations may exhibit mechanical serial dependence.
+Decision rule:
+    Reject H0 if LR_ind > 6.63 (at the 99% confidence level, df = 1)
 
-Therefore:
-    
-Christoffersen independence and conditional coverage tests are additionally
-evaluated on a non-overlapping 5-day sample to avoid overstating violation clustering.
+To reduce overlap-induced dependence, this test is evaluated on the
+non-overlapping 5-day sample.
 """
 
 def christoffersen_independence_test(var, pnl):
     violations = (pnl < -var).astype(int)
-    
+
     # Transition counts
     n00 = n01 = n10 = n11 = 0
 
-    for i in range(1, len(violations)): #First observation is excluded
-        prev = violations.iloc[i-1]
+    for i in range(1, len(violations)):  # The first observation has no previous state
+        prev = violations.iloc[i - 1]
         curr = violations.iloc[i]
+
         if prev == 0 and curr == 0:
             n00 += 1
         elif prev == 0 and curr == 1:
@@ -933,18 +978,22 @@ def christoffersen_independence_test(var, pnl):
     pi01 = n01 / (n00 + n01) if (n00 + n01) > 0 else 0
     pi11 = n11 / (n10 + n11) if (n10 + n11) > 0 else 0
     pi = (n01 + n11) / (n00 + n01 + n10 + n11)
-    
+
     # Prevent log(0)
     eps = 1e-10
     pi01 = max(min(pi01, 1 - eps), eps)
     pi11 = max(min(pi11, 1 - eps), eps)
     pi = max(min(pi, 1 - eps), eps)
 
-    # Likelihood ratio
+    # Likelihood ratio statistic
     LR_ind = -2 * (
-        (n00 + n10)*np.log(1 - pi) + (n01 + n11)*np.log(pi)
-        - (n00*np.log(1 - pi01) + n01*np.log(pi01)
-           + n10*np.log(1 - pi11) + n11*np.log(pi11))
+        (n00 + n10) * np.log(1 - pi) + (n01 + n11) * np.log(pi)
+        - (
+            n00 * np.log(1 - pi01)
+            + n01 * np.log(pi01)
+            + n10 * np.log(1 - pi11)
+            + n11 * np.log(pi11)
+        )
     )
 
     return LR_ind, (n00, n01, n10, n11)
@@ -967,26 +1016,15 @@ print(mc_trans)
 """
 Backtesting insight:
 
-Independence test statistics (non-overlapping sample):
+Independence is evaluated on the non-overlapping sample to reduce the
+mechanical serial dependence induced by overlapping 5-day forward PnL construction.
 
-    Historical VaR              : 3.855
-    Parametric / Monte Carlo    : 1.530
+In this framework, the independence statistics remain below the 99% rejection
+threshold, suggesting that strong residual dependence is not evident once
+overlap effects are reduced.
 
-Compared with the overlapping 5-day specification, the LR independence statistics
-drop materially once non-overlapping samples are used.
-
-This indicates that a substantial portion of the previously observed violation
-clustering was mechanically induced by overlapping forward PnL construction.
-
-Interpretation:
-
-    - Historical VaR shows a somewhat larger dependence statistic than the other
-      models, but not enough to reject independence at the 99% level.
-    - Parametric and Monte Carlo VaR show even weaker evidence of residual
-      dependence once overlap effects are removed.
-
-This highlights the importance of distinguishing overlap-induced serial dependence
-from genuine model failure.
+The transition counts provide additional context by showing how often
+violations persist from one observation to the next.
 """
 
 
@@ -996,83 +1034,78 @@ from genuine model failure.
 def conditional_coverage_test(lr_uc, lr_ind):
     return lr_uc + lr_ind
 
-his_CCI_test_result = conditional_coverage_test(his_kupiec_LR_NO, his_ind_lr)
-para_CCI_test_result = conditional_coverage_test(para_kupiec_LR_NO, para_ind_lr)
-mc_CCI_test_result = conditional_coverage_test(mc_kupiec_LR_NO, mc_ind_lr)
+his_cc_lr = conditional_coverage_test(his_kupiec_LR_NO, his_ind_lr)
+para_cc_lr = conditional_coverage_test(para_kupiec_LR_NO, para_ind_lr)
+mc_cc_lr = conditional_coverage_test(mc_kupiec_LR_NO, mc_ind_lr)
 
-CCI_results = pd.DataFrame({
+cc_results = pd.DataFrame({
     "Method": ["Historical", "Parametric", "Monte Carlo"],
     "LR_CC (Non-overlapping)": [
-        his_CCI_test_result,
-        para_CCI_test_result,
-        mc_CCI_test_result
+        his_cc_lr,
+        para_cc_lr,
+        mc_cc_lr
     ]
 })
 
-print(CCI_results)
+print(cc_results)
 
 """
 Backtesting insight:
 
-Conditional coverage results on the non-overlapping sample are:
+The conditional coverage test combines unconditional coverage and independence into a single diagnostic.
 
-    Historical VaR           : LR_CC ≈ 3.892
-    Parametric / Monte Carlo : LR_CC ≈ 4.842
+Because it is evaluated on the non-overlapping sample, the results are less affected 
+by the mechanical serial dependence induced by overlapping forward PnL construction.
 
 Interpretation:
 
-    All three models remain below standard rejection thresholds on the
-    non-overlapping sample.
+    - Historical VaR remains the most stable model under conditional coverage.
 
-    Historical VaR still performs best overall, while Parametric and Monte Carlo
-    VaR remain weaker mainly because their unconditional exceedance frequency is
-    still higher than desired.
+    - Parametric and Monte Carlo VaR may continue to appear weaker because
+      deficiencies in unconditional coverage are carried into the joint test.
 
-Overall, the non-overlapping analysis provides a cleaner diagnostic by reducing
-mechanical serial dependence from overlapping forward PnL construction.
+Overall, the non-overlapping conditional coverage analysis provides a cleaner
+joint assessment of violation frequency and dependence structure.
 """
 
 
 
 
-#-----EWMA-----
+#-----Exponentially Weighted Moving Average-----
 """
-Dynamic Volatility Extensios
+Dynamic Volatility Extension:
 
-The static parametric and Monte Carlo models show weak tail coverage under backtesting. 
-EWMA is introduced as a dynamic volatility extension to test whether time-varying volatility scaling 
-improves VaR coverage relative to static volatility assumptions.
+The static Parametric and Monte Carlo models show weak tail coverage under backtesting. 
+EWMA is introduced as a dynamic volatility extension to examine whether time-varying volatility scaling 
+improves VaR performance relative to static volatility assumptions.
 
-Importantly, EWMA is evaluated on the same basis as the previous models:
+To keep the comparison internally consistent, EWMA is evaluated using the same:
 - 5-day VaR horizon
 - 99% confidence level
-- same portfolio value
-- same forward 5-day realized PnL for backtesting
+- portfolio value
+- forward 5-day realized PnL for backtesting
 
-This keeps the comparison across models internally consistent.
+EWMA volatility is implemented using the RiskMetrics framework:
 
-EWMA volatility is implemented following the RiskMetrics framework developed by J.P. Morgan.
-EWMA volatility estimator (RiskMetrics):
-
-    σ_t² = λ σ_{t-1}² + (1 - λ) r_{t-1}²
+    σ_t² = λσ_{t-1}² + (1 - λ)r_{t-1}²
 
 RiskMetrics standard decay factors:
     Daily data:   λ = 0.94
     Weekly data:  λ = 0.97
     Monthly data: λ = 0.99
-    
-Because λ is determined by data frequency, not VaR horizon. Since the model uses daily returns, 
-λ=0.94 is appropriate. The 5-day VaR is obtained through square-root-of-time scaling.    
+
+Because λ is determined by data frequency rather than VaR horizon, λ = 0.94 is appropriate 
+for daily returns. The 5-day VaR is then obtained through square-root-of-time scaling.
 """
 
 def compute_ewma_volatility(returns, lam=0.94, init_window=60):
     ewma_var = np.full(len(returns), np.nan)
 
-    # seed variance using an initial subsample
+    # Seed the recursion using the variance of an initial subsample
     ewma_var[init_window - 1] = returns.iloc[:init_window].var()
 
     for t in range(init_window, len(returns)):
-        ewma_var[t] = lam * ewma_var[t-1] + (1 - lam) * returns.iloc[t-1]**2
+        ewma_var[t] = lam * ewma_var[t - 1] + (1 - lam) * returns.iloc[t - 1]**2
 
     return pd.Series(np.sqrt(ewma_var), index=returns.index)
 
@@ -1092,7 +1125,7 @@ def compute_ewma_var_series(
 
     z = norm.ppf(confidence)
 
-    # 5-day VaR via square-root-of-time scaling
+    # Multi-day VaR under normality using square-root-of-time scaling
     ewma_var_series = value * z * ewma_vol * np.sqrt(horizon)
 
     return ewma_var_series, ewma_vol
@@ -1106,64 +1139,62 @@ ewma_var_series, ewma_vol = compute_ewma_var_series(
     init_window=60
 )
 
-ewma_var_series = ewma_var_series.dropna()
-
-# Align EWMA VaR with the same forward 5-day PnL used in other models
+# Align EWMA VaR to the same forward PnL test period used in the other models
 ewma_common_index = common_index.intersection(ewma_var_series.index)
 
 ewma_var_series = ewma_var_series.loc[ewma_common_index]
 ewma_pnl_test = forward_pnl.loc[ewma_common_index]
 
-
 # Violation indicator
 ewma_violations = ewma_pnl_test < -ewma_var_series
 
-#EWMA results
+# EWMA summary
 print("EWMA Violations:", ewma_violations.sum())
 print("EWMA Violation Rate:", ewma_violations.mean())
 print("EWMA Average VaR:", ewma_var_series.mean())
-print("Worst 5-day Forward PnL:", ewma_pnl_test.min())
 
-# Kupiec & Traffic Light
+# Kupiec and Traffic Light
 ewma_kupiec_LR, ewma_kupiec_x = kupiec_test(ewma_var_series, ewma_pnl_test)
 traffic_ewma = traffic_light_rolling(ewma_var_series, ewma_pnl_test)
+
 print("EWMA Kupiec LR:", ewma_kupiec_LR)
-print(traffic_ewma["Zone"].value_counts())
-print(traffic_ewma["Violations"].mean())
+print("EWMA Avg Violations (250-day window):", traffic_ewma["Violations"].mean())
 
-# Non-Overlapping
-ewma_var_nonoverlap, ewma_pnl_nonoverlap = make_non_overlapping_samples(
-    ewma_var_series, ewma_pnl_test, horizon=5, start=0
-)
+# Non-overlapping sample
+ewma_var_nonoverlap, ewma_pnl_nonoverlap = make_non_overlapping_sample(
+    ewma_var_series, ewma_pnl_test, horizon=5, start=0)
 
-ewma_kupiec_LR_NO, ewma_kupiec_x_NO = kupiec_test(
-    ewma_var_nonoverlap, ewma_pnl_nonoverlap
-)
+ewma_kupiec_LR_NO, _ = kupiec_test(
+    ewma_var_nonoverlap, ewma_pnl_nonoverlap)
 
-print(ewma_kupiec_LR_NO, ewma_kupiec_x_NO)
+print("EWMA Kupiec LR (Non-overlapping):", ewma_kupiec_LR_NO)
+
 """
 EWMA Backtesting Interpretation:
 
-EWMA updates conditional volatility but still relies on a volatility-scaled normal framework, 
-which can materially underestimate multi-day tail risk in the presence of fat tails and stress dynamics.
+EWMA updates conditional volatility over time, but the VaR construction still
+relies on a volatility-scaled normal framework.
 
-Its average VaR is lower than not only Historical VaR but also the static
-Parametric and Monte Carlo VaR estimates, which leads to an excessive number
-of violations.
+In this setup, EWMA produces a much higher violation rate than the 1% level
+implied by a 99% VaR model, indicating severe underestimation of 5-day tail risk.
 
-The traffic-light results are particularly unfavorable, with the model spending
-most of the time in the red zone and producing an average of about 10.9
-violations per 250-day window.
+The traffic light results are also unfavorable, with the model frequently
+falling into the red zone and producing an average violation count above the
+standard 250-day benchmark.
 
-This suggests that volatility updating alone is not sufficient to capture the
-true 5-day tail risk in the present dataset. In particular, EWMA fails to fully
-reflect fat tails, large jumps, and other distributional features of market stress.
+Importantly, the weak coverage remains even on the non-overlapping sample,
+suggesting that the problem is not driven only by overlap effects, but by the
+model's inability to fully capture fat tails, large jumps, and stress-period
+loss dynamics.
+
+Overall, volatility updating alone is not sufficient to recover the true
+multi-day tail risk in the present dataset.
 """
 
 
 
 
-#-----GARCH(1,1)-----
+#-----Generalized Autoregressive Conditional Heteroskedasticity-----
 """
 GARCH is introduced as a more flexible conditional volatility model than EWMA.
 
@@ -1173,8 +1204,8 @@ As with EWMA, the model is evaluated on the same basis as the previous VaR frame
 - same portfolio value
 - same forward 5-day realized PnL for backtesting
 
-To keep the comparison with EWMA transparent, GARCH first estimates 1-day
-conditional volatility, and the 5-day VaR is then obtained through
+To maintain comparability with EWMA, this implementation first estimates
+1-day conditional volatility and then converts it to a 5-day VaR using
 square-root-of-time scaling.
 
 This version uses:
@@ -1183,12 +1214,10 @@ This version uses:
 - normal innovations
 """
 
-from arch import arch_model
-
 def compute_garch_volatility(returns, scale=100):
     """
-    GARCH estimation is typically more numerically stable when returns are scaled.
-    The estimated conditional volatility is rescaled back to the original return units.
+    GARCH estimation is often numerically more stable when returns are scaled.
+    The conditional volatility is then rescaled back to the original return units.
     """
     scaled_returns = returns * scale
 
@@ -1203,11 +1232,10 @@ def compute_garch_volatility(returns, scale=100):
 
     result = model.fit(disp='off')
 
-    # Convert conditional volatility back to original return scale
+    # Rescale conditional volatility back to the original return scale
     garch_vol = result.conditional_volatility / scale
 
     return pd.Series(garch_vol, index=returns.index), result
-
 
 def compute_garch_var_series(
     returns,
@@ -1218,97 +1246,71 @@ def compute_garch_var_series(
     garch_vol, garch_result = compute_garch_volatility(returns)
     z = norm.ppf(confidence)
 
-    # 5-day VaR via square-root-of-time scaling
+    # Multi-day VaR under normality using square-root-of-time scaling
     garch_var_series = value * z * garch_vol * np.sqrt(horizon)
 
     return garch_var_series, garch_vol, garch_result
-
 
 garch_var_series, garch_vol, garch_result = compute_garch_var_series(
     portfolio_returns,
     value=1000000,
     horizon=5,
-    confidence=0.99
-)
+    confidence=0.99)
 
-garch_var_series = garch_var_series.dropna()
-
-# Align GARCH VaR with the same forward 5-day PnL used in other models
+# Align GARCH VaR with the same forward PnL test period used in the other models
 garch_common_index = common_index.intersection(garch_var_series.index)
 
 garch_var_series = garch_var_series.loc[garch_common_index]
 garch_pnl_test = forward_pnl.loc[garch_common_index]
 
-
-#GARCH results
+# GARCH results
 garch_violations = garch_pnl_test < -garch_var_series
 
 print("GARCH Violations:", garch_violations.sum())
 print("GARCH Violation Rate:", garch_violations.mean())
 print("GARCH Average VaR:", garch_var_series.mean())
-print("Worst 5-day Forward PnL:", garch_pnl_test.min())
 
-# Kupiec & Traffic Light
-garch_kupiec_LR, garch_kupiec_x = kupiec_test(garch_var_series, garch_pnl_test)
+# Kupiec and Traffic Light
+garch_kupiec_LR, _ = kupiec_test(garch_var_series, garch_pnl_test)
 traffic_garch = traffic_light_rolling(garch_var_series, garch_pnl_test)
 
 print("GARCH Kupiec LR:", garch_kupiec_LR)
-print(traffic_garch["Zone"].value_counts())
-print(traffic_garch["Violations"].mean())
-
+print("GARCH Avg Violations (250-day window):", traffic_garch["Violations"].mean())
 
 #-----Non-overlapping Sample-----
-garch_var_nonoverlap, garch_pnl_nonoverlap = make_non_overlapping_samples(
+garch_var_nonoverlap, garch_pnl_nonoverlap = make_non_overlapping_sample(
     garch_var_series,
     garch_pnl_test,
     horizon=5,
-    start=0
-)
+    start=0)
 
-garch_kupiec_LR_NO, garch_kupiec_x_NO = kupiec_test(
-    garch_var_nonoverlap,
-    garch_pnl_nonoverlap
-)
-
-garch_ind_lr, garch_trans = christoffersen_independence_test(
-    garch_var_nonoverlap,
-    garch_pnl_nonoverlap
-)
-
+garch_kupiec_LR_NO, _ = kupiec_test(garch_var_nonoverlap, garch_pnl_nonoverlap)
+garch_ind_lr, _ = christoffersen_independence_test(garch_var_nonoverlap, garch_pnl_nonoverlap)
 garch_cc_lr = conditional_coverage_test(garch_kupiec_LR_NO, garch_ind_lr)
 
 print("GARCH Kupiec LR (Non-overlapping):", garch_kupiec_LR_NO)
-print("GARCH Violations (Non-overlapping):", garch_kupiec_x_NO)
-print("GARCH Independence LR:", garch_ind_lr)
-print("GARCH Transition Counts:", garch_trans)
 print("GARCH Conditional Coverage LR:", garch_cc_lr)
 
 """
 GARCH Backtesting Interpretation:
 
-Relative to EWMA, the GARCH(1,1) model shows a meaningful improvement in backtesting performance.
+Relative to EWMA, GARCH(1,1) improves backtesting performance by producing
+fewer violations and lower backtesting test statistics.
 
-The observed violation rate declines from about 4.18% under EWMA to 3.43% under GARCH,
-while the Kupiec LR statistic falls from about 213.98 to 137.63.
-The average number of traffic-light violations per 250-day window also decreases
-from about 10.90 to 8.90.
+This suggests that GARCH captures time-varying volatility dynamics more
+effectively than the simpler EWMA specification.
 
-These results indicate that GARCH captures conditional volatility dynamics
-more effectively than the simpler EWMA specification.
+However, the model still performs poorly in absolute terms under a 99% VaR
+framework, as the observed violation rate remains materially above the level
+implied by the confidence threshold.
 
-However, the model still performs poorly in absolute terms under a 99% VaR framework.
-At the 99% confidence level, the theoretical violation rate should be about 1%,
-whereas the observed GARCH violation rate remains much higher at 3.43%.
+The non-overlapping results lead to the same general conclusion: GARCH improves
+on EWMA, but still fails to provide adequate tail coverage.
 
-This weakness is also confirmed on the non-overlapping sample,
-where the Kupiec LR remains elevated at about 20.79 with 23 violations,
-and the conditional coverage statistic is about 22.24.
-
-Overall, GARCH substantially improves on EWMA, but still fails to provide
-adequate tail coverage. This suggests that more flexible volatility dynamics help,
-but are not sufficient on their own. The remaining weakness likely stems not only
-from volatility modeling, but also from the distributional assumption itself,
-which motivates the next extension toward filtered historical simulation (FHS).
+Overall, more flexible volatility dynamics help, but are not sufficient on
+their own. The remaining weakness likely reflects not only volatility modeling,
+but also the normal innovation assumption, which motivates the next extension
+toward filtered historical simulation (FHS).
 """
 
 
@@ -1445,7 +1447,7 @@ print(traffic_fhs["Zone"].value_counts())
 print(traffic_fhs["Violations"].mean())
 
 # Non-overlapping
-fhs_var_nonoverlap, fhs_pnl_nonoverlap = make_non_overlapping_samples(
+fhs_var_nonoverlap, fhs_pnl_nonoverlap = make_non_overlapping_sample(
     fhs_var_series,
     fhs_pnl_test,
     horizon=5,
@@ -1496,6 +1498,167 @@ a central role in accurately measuring multi-day market risk.
 
 
 
+
+#-----Filtered Historical Simulation (FHS)-----
+"""
+FHS combines dynamic volatility filtering with an empirical residual distribution.
+
+Step 1:
+    Estimate conditional volatility using GARCH(1,1)
+
+Step 2:
+    Standardize returns by the estimated volatility:
+        z_t = r_t / sigma_t
+
+Step 3:
+    Use the historical distribution of standardized residuals as the
+    innovation distribution
+
+Step 4:
+    Re-scale sampled residuals using the evolving conditional volatility
+    process to generate filtered future returns
+
+This allows the model to retain time-varying volatility dynamics while
+relaxing the strict normality assumption used in parametric VaR.
+"""
+
+def compute_standardized_residuals(returns, vol):
+    aligned = pd.DataFrame({
+        "returns": returns,
+        "vol": vol
+    }).dropna()
+
+    return aligned["returns"] / aligned["vol"]
+
+def rolling_fhs_var(
+    returns,
+    window=1000,
+    value=1000000,
+    horizon=5,
+    confidence=0.99,
+    simulations=2000,
+    scale=100):
+    
+    var_list = []
+    index_list = []
+
+    for i in range(window, len(returns) - horizon):
+        sample_returns = returns.iloc[i - window:i]
+
+        scaled_sample = sample_returns * scale
+        model = arch_model(
+            scaled_sample,
+            mean='Zero',
+            vol='GARCH',
+            p=1,
+            q=1,
+            dist='normal'
+        )
+        
+        result = model.fit(disp='off')
+
+        sigma_hist = result.conditional_volatility / scale
+        sigma_hist = pd.Series(sigma_hist, index=sample_returns.index)
+
+        z_hist = compute_standardized_residuals(
+            sample_returns,
+            sigma_hist
+        ).dropna().values
+
+        omega = result.params["omega"] / (scale**2)
+        alpha = result.params["alpha[1]"]
+        beta = result.params["beta[1]"]
+
+        last_sigma2 = sigma_hist.iloc[-1] ** 2
+        last_return2 = sample_returns.iloc[-1] ** 2
+
+        path_pnl = np.zeros(simulations)
+
+        for s in range(simulations):
+            sigma2_t = omega + alpha * last_return2 + beta * last_sigma2
+            pnl_path = 0.0
+
+            for _ in range(horizon):
+                z_draw = np.random.choice(z_hist)
+                r_draw = np.sqrt(sigma2_t) * z_draw
+                pnl_path += value * r_draw
+
+                sigma2_t = omega + alpha * (r_draw**2) + beta * sigma2_t
+
+            path_pnl[s] = pnl_path
+
+        var_t = -np.percentile(path_pnl, (1 - confidence) * 100)
+
+        var_list.append(var_t)
+        index_list.append(returns.index[i])
+
+    return pd.Series(var_list, index=index_list)
+
+fhs_var_series = rolling_fhs_var(
+    portfolio_returns,
+    window=1000,
+    value=1000000,
+    horizon=5,
+    confidence=0.99,
+    simulations=2000
+)
+
+fhs_common_index = common_index.intersection(fhs_var_series.index)
+
+fhs_var_series = fhs_var_series.loc[fhs_common_index]
+fhs_pnl_test = forward_pnl.loc[fhs_common_index]
+
+#-----FHS Results-----
+fhs_violations = fhs_pnl_test < -fhs_var_series
+
+print("FHS Violations:", fhs_violations.sum())
+print("FHS Violation Rate:", fhs_violations.mean())
+print("FHS Average VaR:", fhs_var_series.mean())
+
+fhs_kupiec_LR, fhs_kupiec_x = kupiec_test(fhs_var_series, fhs_pnl_test)
+traffic_fhs = traffic_light_rolling(fhs_var_series, fhs_pnl_test)
+
+print("FHS Kupiec LR:", fhs_kupiec_LR)
+print("FHS Avg Violations (250-day window):", traffic_fhs["Violations"].mean())
+
+fhs_var_nonoverlap, fhs_pnl_nonoverlap = make_non_overlapping_sample(
+    fhs_var_series,
+    fhs_pnl_test,
+    horizon=5,
+    start=0
+)
+
+fhs_kupiec_LR_NO, fhs_kupiec_x_NO = kupiec_test(fhs_var_nonoverlap, fhs_pnl_nonoverlap)
+fhs_ind_lr, fhs_trans = christoffersen_independence_test(fhs_var_nonoverlap, fhs_pnl_nonoverlap)
+fhs_cc_lr = conditional_coverage_test(fhs_kupiec_LR_NO, fhs_ind_lr)
+
+print("FHS Kupiec LR (Non-overlapping):", fhs_kupiec_LR_NO)
+print("FHS Conditional Coverage LR:", fhs_cc_lr)
+
+"""
+FHS delivers the strongest performance among the dynamic extensions considered in this framework.
+
+Relative to the normal-based dynamic models such as EWMA and GARCH, FHS produces 
+fewer violations and more favorable backtesting results.
+
+It also improves materially on the static parametric and Monte Carlo approaches.
+However, Historical VaR still remains highly competitive, indicating that the
+empirical distribution of realized returns continues to provide strong tail-risk
+information in this dataset.
+"""
+
+
+
+
+"""
+Overall, Historical VaR delivers the strongest backtesting performance in this framework.
+
+Across Kupiec, Traffic Light, and Conditional Coverage diagnostics, Historical VaR
+remains the most robust model on this dataset.
+
+FHS performs best among the model extensions and comes closest to Historical VaR,
+but Historical VaR still appears to be the strongest overall benchmark.
+"""
 
 
 
