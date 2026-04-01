@@ -534,7 +534,6 @@ backtesting results.
 
 
 
-
 #-----Kupiec Unconditional Coverage Test-----
 """
 Proportion of failure Likelihood Ratio (LR) Test
@@ -843,7 +842,6 @@ underestimate tail risk under static normality-based assumptions.
 
 
 
-
 #-----Non-overlapping Sample Construction-----
 """
 Because the 5-day forward PnL is constructed using overlapping windows,
@@ -869,16 +867,13 @@ def make_non_overlapping_sample(var, pnl, horizon=5, start=0):
 
 
 hist_var_nonoverlap, hist_pnl_nonoverlap = make_non_overlapping_sample(
-    historical_var_series, pnl_test, horizon=5, start=0
-)
+    historical_var_series, pnl_test, horizon=5, start=0)
 
 para_var_nonoverlap, para_pnl_nonoverlap = make_non_overlapping_sample(
-    parametric_var_series, pnl_test, horizon=5, start=0
-)
+    parametric_var_series, pnl_test, horizon=5, start=0)
 
 mc_var_nonoverlap, mc_pnl_nonoverlap = make_non_overlapping_sample(
-    mc_var_series, pnl_test, horizon=5, start=0
-)
+    mc_var_series, pnl_test, horizon=5, start=0)
 
 
 
@@ -998,15 +993,13 @@ def christoffersen_independence_test(var, pnl):
 
     return LR_ind, (n00, n01, n10, n11)
 
-
 his_ind_lr, his_trans = christoffersen_independence_test(hist_var_nonoverlap, hist_pnl_nonoverlap)
 para_ind_lr, para_trans = christoffersen_independence_test(para_var_nonoverlap, para_pnl_nonoverlap)
 mc_ind_lr, mc_trans = christoffersen_independence_test(mc_var_nonoverlap, mc_pnl_nonoverlap)
 
 independence_results = pd.DataFrame({
     "Method": ["Historical", "Parametric", "Monte Carlo"],
-    "LR Independence (Non-overlapping)": [his_ind_lr, para_ind_lr, mc_ind_lr],
-})
+    "LR Independence (Non-overlapping)": [his_ind_lr, para_ind_lr, mc_ind_lr],})
 
 print(independence_results)
 print(his_trans)
@@ -1043,9 +1036,7 @@ cc_results = pd.DataFrame({
     "LR_CC (Non-overlapping)": [
         his_cc_lr,
         para_cc_lr,
-        mc_cc_lr
-    ]
-})
+        mc_cc_lr]})
 
 print(cc_results)
 
@@ -1316,7 +1307,7 @@ toward filtered historical simulation (FHS).
 
 
 
-#-----Filtered Historical Simulation (FHS)-----
+#-----Filtered Historical Simulation-----
 """
 FHS combines dynamic volatility filtering with an empirical residual distribution.
 
@@ -1325,201 +1316,18 @@ Step 1:
 
 Step 2:
     Standardize returns by the estimated volatility:
+        
         z_t = r_t / sigma_t
 
 Step 3:
     Use the historical distribution of standardized residuals as the innovation distribution
 
 Step 4:
-    Re-scale the sampled residuals by the current conditional volatility forecast
+    Re-scale sampled residuals using the evolving conditional volatility process 
     to generate filtered future returns
 
-This allows the model to retain time-varying volatility dynamics while avoiding
+This allows the model to retain time-varying volatility dynamics while relaxing 
 the strict normality assumption used in parametric VaR.
-"""
-
-def compute_standardized_residuals(returns, vol):
-    aligned = pd.DataFrame({
-        "returns": returns,
-        "vol": vol
-    }).dropna()
-
-    z = aligned["returns"] / aligned["vol"]
-    return z
-
-
-def rolling_fhs_var(
-    returns,
-    window=1000,
-    value=1000000,
-    horizon=5,
-    confidence=0.99,
-    simulations=2000,
-    scale=100
-):
-    var_list = []
-    index = []
-
-    for i in range(window, len(returns) - horizon):
-        sample_returns = returns.iloc[i-window:i]
-
-        # Fit GARCH on rolling sample
-        scaled_sample = sample_returns * scale
-        model = arch_model(
-            scaled_sample,
-            mean='Zero',
-            vol='GARCH',
-            p=1,
-            q=1,
-            dist='normal'
-        )
-        result = model.fit(disp='off')
-
-        # In-sample conditional volatility (back to original scale)
-        sigma_hist = result.conditional_volatility / scale
-        sigma_hist = pd.Series(sigma_hist, index=sample_returns.index)
-
-        # Historical standardized residuals
-        z_hist = compute_standardized_residuals(sample_returns, sigma_hist).dropna().values
-
-        # Forecast next-day conditional variance recursively
-        omega = result.params["omega"] / (scale**2)
-        alpha = result.params["alpha[1]"]
-        beta = result.params["beta[1]"]
-
-        last_sigma2 = (sigma_hist.iloc[-1])**2
-        last_return2 = (sample_returns.iloc[-1])**2
-
-        path_pnl = np.zeros(simulations)
-
-        for s in range(simulations):
-            sigma2_t = omega + alpha * last_return2 + beta * last_sigma2
-            pnl_path = 0.0
-
-            for h in range(horizon):
-                z_draw = np.random.choice(z_hist)
-                r_draw = np.sqrt(sigma2_t) * z_draw
-                pnl_path += value * r_draw
-
-                sigma2_t = omega + alpha * (r_draw**2) + beta * sigma2_t
-
-            path_pnl[s] = pnl_path
-
-        var_t = -np.percentile(path_pnl, (1 - confidence) * 100)
-
-        var_list.append(var_t)
-        index.append(returns.index[i])
-
-    return pd.Series(var_list, index=index)
-
-
-fhs_var_series = rolling_fhs_var(
-    portfolio_returns,
-    window=1000,
-    value=1000000,
-    horizon=5,
-    confidence=0.99,
-    simulations=2000
-)
-
-fhs_common_index = common_index.intersection(fhs_var_series.index)
-
-fhs_var_series = fhs_var_series.loc[fhs_common_index]
-fhs_pnl_test = forward_pnl.loc[fhs_common_index]
-
-
-
-
-#-----FHS Results-----
-fhs_violations = fhs_pnl_test < -fhs_var_series
-
-print("FHS Violations:", fhs_violations.sum())
-print("FHS Violation Rate:", fhs_violations.mean())
-print("FHS Average VaR:", fhs_var_series.mean())
-print("Worst 5-day Forward PnL:", fhs_pnl_test.min())
-
-# Kupiec & Traffic Light
-fhs_kupiec_LR, fhs_kupiec_x = kupiec_test(fhs_var_series, fhs_pnl_test)
-traffic_fhs = traffic_light_rolling(fhs_var_series, fhs_pnl_test)
-
-print("FHS Kupiec LR:", fhs_kupiec_LR)
-print(traffic_fhs["Zone"].value_counts())
-print(traffic_fhs["Violations"].mean())
-
-# Non-overlapping
-fhs_var_nonoverlap, fhs_pnl_nonoverlap = make_non_overlapping_sample(
-    fhs_var_series,
-    fhs_pnl_test,
-    horizon=5,
-    start=0
-)
-
-fhs_kupiec_LR_NO, fhs_kupiec_x_NO = kupiec_test(
-    fhs_var_nonoverlap,
-    fhs_pnl_nonoverlap
-)
-
-fhs_ind_lr, fhs_trans = christoffersen_independence_test(
-    fhs_var_nonoverlap,
-    fhs_pnl_nonoverlap
-)
-
-fhs_cc_lr = conditional_coverage_test(fhs_kupiec_LR_NO, fhs_ind_lr)
-
-print("FHS Kupiec LR (Non-overlapping):", fhs_kupiec_LR_NO)
-print("FHS Violations (Non-overlapping):", fhs_kupiec_x_NO)
-print("FHS Independence LR:", fhs_ind_lr)
-print("FHS Transition Counts:", fhs_trans)
-print("FHS Conditional Coverage LR:", fhs_cc_lr)
-
-"""
-FHS Backtesting Interpretation:
-
-FHS delivers the strongest backtesting performance among the volatility-based extensions considered so far.
-
-Relative to GARCH, the observed violation rate declines from about 3.43% to 2.08%,
-while the Kupiec LR statistic falls sharply from about 137.63 to 33.52.
-The average number of traffic-light violations per 250-day window also drops
-from about 8.90 under GARCH to 5.42 under FHS.
-
-These improvements suggest that combining dynamic volatility filtering with the
-empirical distribution of standardized residuals materially improves tail-risk measurement.
-
-The non-overlapping results are particularly important.
-The non-overlapping Kupiec LR falls to about 4.50, and the conditional coverage
-LR declines to about 5.03, both below the 99% rejection threshold of 6.63.
-This indicates that once overlap-induced dependence is reduced, FHS provides
-substantially better calibration than the normal-based dynamic volatility models.
-
-Overall, FHS appears to address a major weakness of the earlier models:
-volatility dynamics alone are not sufficient, and empirical tail behavior plays
-a central role in accurately measuring multi-day market risk.
-"""
-
-
-
-
-#-----Filtered Historical Simulation (FHS)-----
-"""
-FHS combines dynamic volatility filtering with an empirical residual distribution.
-
-Step 1:
-    Estimate conditional volatility using GARCH(1,1)
-
-Step 2:
-    Standardize returns by the estimated volatility:
-        z_t = r_t / sigma_t
-
-Step 3:
-    Use the historical distribution of standardized residuals as the
-    innovation distribution
-
-Step 4:
-    Re-scale sampled residuals using the evolving conditional volatility
-    process to generate filtered future returns
-
-This allows the model to retain time-varying volatility dynamics while
-relaxing the strict normality assumption used in parametric VaR.
 """
 
 def compute_standardized_residuals(returns, vol):
@@ -1645,12 +1453,10 @@ It also improves materially on the static parametric and Monte Carlo approaches.
 However, Historical VaR still remains highly competitive, indicating that the
 empirical distribution of realized returns continues to provide strong tail-risk
 information in this dataset.
-"""
 
 
 
 
-"""
 Overall, Historical VaR delivers the strongest backtesting performance in this framework.
 
 Across Kupiec, Traffic Light, and Conditional Coverage diagnostics, Historical VaR
