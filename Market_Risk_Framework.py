@@ -801,14 +801,14 @@ Transition probabilities:
 
     π01 = n01 / (n00 + n01)
     π11 = n11 / (n10 + n11)
-    π   = (n01 + n11) / (n00 + n01 + n10 + n11)
+    π   = (n01 + n11) / (n00 + n01 + n10 + n11) 
 
 Transition counts:
 
     n00 : no violation → no violation
     n01 : no violation → violation
     n10 : violation → no violation
-    n11 : violation → violation
+    n11 : violation → violation (key count for detecting clustering)
 
 Hypotheses:
 
@@ -816,16 +816,17 @@ Hypotheses:
     H1: π01 ≠ π11       (violations exhibit dependence)
 
 Under H0:
-    LR_ind ~ χ²(1)
+    LR_ind is asymptotically distributed as χ²(1)
 
 Decision rule:
-    Reject H0 if LR_ind > 6.63 (at the 99% confidence level, df = 1)
+    Reject H0 if LR_ind > 6.63 (critical value at the 1% significance level, df = 1)
 
 To reduce overlap-induced dependence, this test is evaluated on the
 non-overlapping 5-day sample.
 """
 
 def christoffersen_independence_test(var, pnl):
+    # Convert Boolean violations to a 0/1 indicator series. violation -> 1, non-violation -> 0
     violations = (pnl < -var).astype(int)
 
     # Transition counts
@@ -855,7 +856,8 @@ def christoffersen_independence_test(var, pnl):
     pi11 = max(min(pi11, 1 - eps), eps)
     pi = max(min(pi, 1 - eps), eps)
 
-    # Likelihood ratio statistic
+    # Likelihood Ratio test statistic
+    # LR_ind = -2 * (log L_H0 - log L_H1)
     LR_ind = -2 * (
         (n00 + n10) * np.log(1 - pi) + (n01 + n11) * np.log(pi)
         - (
