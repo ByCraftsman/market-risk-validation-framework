@@ -967,17 +967,24 @@ for daily returns. The 5-day VaR is then obtained through square-root-of-time sc
 """
 
 def compute_ewma_volatility(returns, lam=0.94, init_window=60):
-    ewma_var = np.full(len(returns), np.nan)
+    # Create an array of length len(returns), initialized with NaN,
+    # to store the EWMA variance estimates over time
+    ewma_variance = np.full(len(returns), np.nan)
+    
+    # Use the variance of the first init_window returns as the initial seed.
+    # It is stored at index init_window - 1 because Python uses zero-based indexing.
+    ewma_variance[init_window - 1] = returns.iloc[:init_window].var()
 
-    # Seed the recursion using the variance of an initial subsample
-    ewma_var[init_window - 1] = returns.iloc[:init_window].var()
-
+    # Start recursion after the initial variance seed is set
     for t in range(init_window, len(returns)):
-        ewma_var[t] = lam * ewma_var[t - 1] + (1 - lam) * returns.iloc[t - 1]**2
+        
+        ewma_variance[t] = (
+            lam * ewma_variance[t - 1]           # persistence from the previous variance estimate
+            + (1 - lam) * returns.iloc[t - 1]**2 # new information from the latest squared return shock
+        )
+    return pd.Series(np.sqrt(ewma_variance), index=returns.index)
 
-    return pd.Series(np.sqrt(ewma_var), index=returns.index)
-
-def compute_ewma_var_series(
+def compute_ewma_VaR_series(
     returns,
     value=1000000,
     horizon=5,
@@ -985,7 +992,7 @@ def compute_ewma_var_series(
     lam=0.94,
     init_window=60
 ):
-    ewma_vol = compute_ewma_volatility(
+    ewma_volatility = compute_ewma_volatility(
         returns,
         lam=lam,
         init_window=init_window
@@ -993,12 +1000,13 @@ def compute_ewma_var_series(
 
     z = norm.ppf(confidence)
 
-    # Multi-day VaR under normality using square-root-of-time scaling
-    ewma_var_series = value * z * ewma_vol * np.sqrt(horizon)
+    # Convert 1-day EWMA volatility into multi-day monetary VaR
+    # under normality using square-root-of-time scaling
+    ewma_VaR_series = value * z * ewma_volatility * np.sqrt(horizon)
 
-    return ewma_var_series, ewma_vol
+    return ewma_VaR_series, ewma_volatility
 
-ewma_var_series, ewma_vol = compute_ewma_var_series(
+ewma_VaR_series, ewma_volatility = compute_ewma_VaR_series(
     portfolio_returns,
     value=1000000,
     horizon=5,
@@ -1008,32 +1016,32 @@ ewma_var_series, ewma_vol = compute_ewma_var_series(
 )
 
 # Align EWMA VaR to the same forward PnL test period used in the other models
-ewma_common_index = common_index.intersection(ewma_var_series.index)
+ewma_common_index = common_index.intersection(ewma_VaR_series.index)
 
-ewma_var_series = ewma_var_series.loc[ewma_common_index]
+ewma_VaR_series = ewma_VaR_series.loc[ewma_common_index]
 ewma_pnl_test = forward_pnl.loc[ewma_common_index]
 
-# Violation indicator
-ewma_violations = ewma_pnl_test < -ewma_var_series
+# Boolean violation series
+ewma_violations = ewma_pnl_test < -ewma_VaR_series
 
 # EWMA summary
 print("EWMA Violations:", ewma_violations.sum())
 print("EWMA Violation Rate:", ewma_violations.mean())
-print("EWMA Average VaR:", ewma_var_series.mean())
+print("EWMA Average 5-day VaR:", ewma_VaR_series.mean())
 
 # Kupiec and Traffic Light
-ewma_kupiec_LR, ewma_kupiec_x = kupiec_test(ewma_var_series, ewma_pnl_test)
-traffic_ewma = traffic_light_rolling(ewma_var_series, ewma_pnl_test)
+ewma_kupiec_LR, ewma_kupiec_x = kupiec_test(ewma_VaR_series, ewma_pnl_test)
+traffic_ewma = traffic_light_rolling(ewma_VaR_series, ewma_pnl_test)
 
 print("EWMA Kupiec LR:", ewma_kupiec_LR)
 print("EWMA Avg Violations (250-day window):", traffic_ewma["Violations"].mean())
 
 # Non-overlapping sample
-ewma_var_nonoverlap, ewma_pnl_nonoverlap = make_non_overlapping_sample(
-    ewma_var_series, ewma_pnl_test, horizon=5, start=0)
+ewma_VaR_nonoverlap, ewma_pnl_nonoverlap = make_non_overlapping_sample(
+    ewma_VaR_series, ewma_pnl_test, horizon=5, start=0)
 
 ewma_kupiec_LR_NO, _ = kupiec_test(
-    ewma_var_nonoverlap, ewma_pnl_nonoverlap)
+    ewma_VaR_nonoverlap, ewma_pnl_nonoverlap)
 
 print("EWMA Kupiec LR (Non-overlapping):", ewma_kupiec_LR_NO)
 
