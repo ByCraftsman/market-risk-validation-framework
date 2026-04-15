@@ -1080,14 +1080,33 @@ As with EWMA, the model is evaluated on the same basis as the previous VaR frame
 - same portfolio value
 - same forward 5-day realized PnL for backtesting
 
-To maintain comparability with EWMA, this implementation first estimates
-1-day conditional volatility and then converts it to a 5-day VaR using
-square-root-of-time scaling.
+To maintain comparability with EWMA, this implementation first estimates 1-day conditional
+volatility and then converts it to a 5-day VaR using square-root-of-time scaling.
 
 This version uses:
 - portfolio-level univariate GARCH(1,1)
 - zero conditional mean
 - normal innovations
+
+GARCH(1,1) conditional variance dynamics:
+
+    sigma_t^2 = omega + alpha * epsilon_{t-1}^2 + beta * sigma_{t-1}^2
+
+where:
+- omega : long-run variance component
+- alpha : sensitivity to recent shocks
+- beta  : volatility persistence
+
+With mean='Zero', the shock term epsilon_t is the portfolio return itself.
+The innovation distribution is assumed to be normal.
+
+Rationale for using GARCH(1,1):
+
+- GARCH(1,1) is a standard and parsimonious conditional volatility model.
+- Higher-order GARCH specifications do not necessarily improve performance.
+  As the number of parameters increases, interpretability declines, while the
+  risk of estimation instability and overfitting may rise.
+- This makes GARCH(1,1) a practical and interpretable benchmark for VaR comparison.  
 """
 
 def compute_garch_volatility(returns, scale=100):
@@ -1103,7 +1122,7 @@ def compute_garch_volatility(returns, scale=100):
         vol='GARCH',
         p=1,
         q=1,
-        dist='normal'
+        dist='normal' # Assume normally distributed innovations
     )
 
     result = model.fit(disp='off')
@@ -1122,13 +1141,14 @@ def compute_garch_var_series(
     garch_vol, garch_result = compute_garch_volatility(returns)
     z = norm.ppf(confidence)
 
-    # Multi-day VaR under normality using square-root-of-time scaling
     garch_var_series = value * z * garch_vol * np.sqrt(horizon)
 
     return garch_var_series, garch_vol, garch_result
 
+# Portfolio-level univariate GARCH is used for simplicity and direct comparability
+# with the portfolio-level backtesting framework.
 garch_var_series, garch_vol, garch_result = compute_garch_var_series(
-    portfolio_returns,
+    portfolio_returns, 
     value=1000000,
     horizon=5,
     confidence=0.99)
@@ -1136,6 +1156,7 @@ garch_var_series, garch_vol, garch_result = compute_garch_var_series(
 # Align GARCH VaR with the same forward PnL test period used in the other models
 garch_common_index = common_index.intersection(garch_var_series.index)
 
+# Retain only timestamps shared by GARCH VaR and the common backtesting sample
 garch_var_series = garch_var_series.loc[garch_common_index]
 garch_pnl_test = forward_pnl.loc[garch_common_index]
 
