@@ -1110,10 +1110,9 @@ Rationale for using GARCH(1,1):
 """
 
 def compute_garch_volatility(returns, scale=100):
-    """
-    GARCH estimation is often numerically more stable when returns are scaled.
-    The conditional volatility is then rescaled back to the original return units.
-    """
+    
+    # GARCH estimation is often numerically more stable when returns are scaled.
+    # The conditional volatility is then rescaled back to the original return units.
     scaled_returns = returns * scale
 
     model = arch_model(
@@ -1232,11 +1231,16 @@ Step 4:
     Re-scale sampled residuals using the evolving conditional volatility process 
     to generate filtered future returns
 
-This allows the model to retain time-varying volatility dynamics while relaxing 
-the strict normality assumption used in parametric VaR.
+Although the GARCH filter is estimated under normal innovations,
+future shocks in the FHS simulation are not drawn from a normal distribution.
+Instead, they are resampled from the empirical distribution of standardized residuals.
+
+This allows FHS to retain GARCH-based volatility dynamics while reflecting
+fatter tails than a purely normal innovation assumption.
 """
 
 def compute_standardized_residuals(returns, vol):
+    # Align returns and volatility on the same timestamps before standardization
     aligned = pd.DataFrame({
         "returns": returns,
         "vol": vol
@@ -1244,9 +1248,11 @@ def compute_standardized_residuals(returns, vol):
 
     return aligned["returns"] / aligned["vol"]
 
+# A 1000-day rolling window is used to balance estimation stability
+# and a sufficiently rich empirical residual pool.
 def rolling_fhs_var(
     returns,
-    window=1000,
+    window=1000, 
     value=1000000,
     horizon=5,
     confidence=0.99,
@@ -1266,7 +1272,7 @@ def rolling_fhs_var(
             vol='GARCH',
             p=1,
             q=1,
-            dist='normal'
+            dist='normal' # Used for GARCH estimation, not for the final shock draw
         )
         
         result = model.fit(disp='off')
@@ -1279,7 +1285,7 @@ def rolling_fhs_var(
             sigma_hist
         ).dropna().values
 
-        omega = result.params["omega"] / (scale**2)
+        omega = result.params["omega"] / (scale**2) # omega is a variance parameter, so it must be rescaled by scale**2
         alpha = result.params["alpha[1]"]
         beta = result.params["beta[1]"]
 
@@ -1293,10 +1299,11 @@ def rolling_fhs_var(
             pnl_path = 0.0
 
             for _ in range(horizon):
-                z_draw = np.random.choice(z_hist)
+                z_draw = np.random.choice(z_hist) # Empirical draw from standardized residuals
                 r_draw = np.sqrt(sigma2_t) * z_draw
                 pnl_path += value * r_draw
 
+                # Update conditional variance recursively, so volatility changes along each simulated path
                 sigma2_t = omega + alpha * (r_draw**2) + beta * sigma2_t
 
             path_pnl[s] = pnl_path
