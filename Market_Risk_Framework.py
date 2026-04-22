@@ -352,7 +352,7 @@ four broad categories:
       VaR quantiles
 
 
-Regulatory Perspective
+Regulatory Perspective:
 
     In this framework, the main focus is on exceedance-based backtesting.
 
@@ -362,6 +362,13 @@ Regulatory Perspective
     - Conditional Coverage
 
 These tests form the basis for regulatory interpretations such as the Basel traffic light approach.
+
+
+Interpretation of backtesting results:
+
+In VaR backtesting, the null hypothesis usually represents acceptable model performance.
+Therefore, unlike many conventional research settings, failing to reject the null is
+usually the desirable outcome.
 """
 
 
@@ -1040,10 +1047,12 @@ print("EWMA Avg Violations (250-day window):", traffic_ewma["Violations"].mean()
 ewma_VaR_nonoverlap, ewma_pnl_nonoverlap = make_non_overlapping_sample(
     ewma_VaR_series, ewma_pnl_test, horizon=5, start=0)
 
-ewma_kupiec_LR_NO, _ = kupiec_test(
-    ewma_VaR_nonoverlap, ewma_pnl_nonoverlap)
+ewma_kupiec_LR_NO, _ = kupiec_test(ewma_VaR_nonoverlap, ewma_pnl_nonoverlap)
+ewma_ind_lr, _ = christoffersen_independence_test(ewma_VaR_nonoverlap, ewma_pnl_nonoverlap)
+ewma_cc_lr = conditional_coverage_test(ewma_kupiec_LR_NO, ewma_ind_lr)
 
 print("EWMA Kupiec LR (Non-overlapping):", ewma_kupiec_LR_NO)
+print("EWMA Conditional Coverage LR:", ewma_cc_lr)
 
 """
 EWMA Backtesting Interpretation:
