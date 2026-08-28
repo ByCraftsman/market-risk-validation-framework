@@ -5,10 +5,26 @@ import yfinance as yf
 import matplotlib.pyplot as plt
 from scipy.stats import norm
 from arch import arch_model
+from pathlib import Path
+import json
+import sys
 
-years = 20
-end_date = dt.datetime.now()
-start_date = end_date - dt.timedelta(days = 365*years)
+# Reproducibility
+np.random.seed(42)
+start_date = dt.datetime(2006, 1, 1)
+end_date = dt.datetime(2026, 1, 1)
+
+# ----- Reference Data Path -----
+PROJECT_ROOT = (
+    Path(__file__).resolve().parent
+    if "__file__" in globals()
+    else Path.cwd()
+)
+
+DATA_DIR = PROJECT_ROOT / "data"
+PRICE_SNAPSHOT_PATH = (DATA_DIR / "market_prices_2006-01-01_2025-12-31.csv")
+
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 tickers = [
     '^KS11',      # KOSPI Composite Index
@@ -17,24 +33,96 @@ tickers = [
     '^GSPC'       # S&P 500
 ]
 
-
 def fetch_prices(tickers, start_date, end_date):
-    
+
     df = pd.DataFrame()
 
     for ticker in tickers:
-        data = yf.download(ticker, start=start_date, end=end_date)
+        data = yf.download(
+            ticker,
+            start=start_date,
+            end=end_date,
+            auto_adjust=False,
+            progress=False,
+        )
+
+        if data.empty:
+            raise ValueError(
+                f"No price data returned for {ticker}."
+            )
 
         """
-        For Indices, 'Close' is used as they don't have dividends or splits.
-        For ETFs, 'Adj Close' is used to account for corporate actions.
+        For indices, Close is used.
+        For IEF, Adjusted Close is used to account for distributions
+        and other price adjustments.
         """
 
-        df[ticker] = data['Adj Close'] if 'Adj Close' in data.columns else data['Close']
+        price_column = (
+            "Adj Close"
+            if ticker == "IEF"
+            else "Close"
+        )
+
+        series = data[price_column]
+
+        # Handles MultiIndex output from recent yfinance versions.
+        if isinstance(series, pd.DataFrame):
+            series = series.iloc[:, 0]
+
+        df[ticker] = series
 
     return df.dropna()
 
-prices = fetch_prices(tickers, start_date, end_date)
+
+def load_or_create_price_snapshot(tickers, start_date, end_date, snapshot_path):
+    if snapshot_path.exists():
+        prices = pd.read_csv(
+            snapshot_path,
+            index_col="Date",
+            parse_dates=True,
+        )
+
+        missing_tickers = set(tickers) - set(prices.columns)
+
+        if missing_tickers:
+            raise ValueError(
+                f"Price snapshot is missing tickers: "
+                f"{sorted(missing_tickers)}"
+            )
+
+        prices = prices.loc[:, tickers]
+        data_source = "saved snapshot"
+
+    else:
+        prices = fetch_prices(
+            tickers,
+            start_date,
+            end_date,
+        )
+
+        prices.to_csv(
+            snapshot_path,
+            index_label="Date",
+        )
+
+        data_source = "Yahoo Finance download"
+
+    print(f"Data source: {data_source}")
+    print(f"Observations: {len(prices):,}")
+    print(
+        f"Sample: {prices.index.min().date()} "
+        f"to {prices.index.max().date()}"
+    )
+
+    return prices
+
+
+prices = load_or_create_price_snapshot(
+    tickers=tickers,
+    start_date=start_date,
+    end_date=end_date,
+    snapshot_path=PRICE_SNAPSHOT_PATH,
+)
 
 
 
@@ -59,6 +147,80 @@ prices = fetch_prices(tickers, start_date, end_date)
 """
 
 weights = np.array([1/len(tickers)]*len(tickers))
+
+# ----- Reference Run Configuration -----
+REFERENCE_RESULTS_DIR = (
+    PROJECT_ROOT / "results" / "reference_run"
+)
+
+REFERENCE_RESULTS_DIR.mkdir(
+    parents=True,
+    exist_ok=True,
+)
+
+RUN_CONFIG_PATH = (
+    REFERENCE_RESULTS_DIR / "run_config.json"
+)
+
+run_config = {
+    "reference_run_id": "market-risk-2006-2025-seed42",
+    "requested_sample": {
+        "start_date": start_date.date().isoformat(),
+        "end_date_exclusive": end_date.date().isoformat(),
+    },
+    "actual_sample": {
+        "start_date": prices.index.min().date().isoformat(),
+        "end_date": prices.index.max().date().isoformat(),
+        "observations": len(prices),
+    },
+    "portfolio": {
+        "tickers": tickers,
+        "weights": weights.tolist(),
+        "portfolio_value": 1_000_000,
+        "currency": "USD",
+        "fx_risk_included": False,
+    },
+    "risk_settings": {
+        "holding_period_days": 5,
+        "confidence_level": 0.99,
+        "estimation_window": 1_000,
+        "random_seed": 42,
+    },
+    "simulation_settings": {
+        "monte_carlo_simulations": 10_000,
+        "fhs_simulations": 2_000,
+        "ewma_lambda": 0.94,
+        "garch_specification": "GARCH(1,1)",
+    },
+    "data_snapshot": (
+        PRICE_SNAPSHOT_PATH
+        .relative_to(PROJECT_ROOT)
+        .as_posix()
+    ),
+    "environment": {
+        "python": sys.version.split()[0],
+        "numpy": np.__version__,
+        "pandas": pd.__version__,
+        "yfinance": yf.__version__,
+    },
+}
+
+with RUN_CONFIG_PATH.open(
+    "w",
+    encoding="utf-8",
+) as config_file:
+    json.dump(
+        run_config,
+        config_file,
+        indent=4,
+        ensure_ascii=False,
+    )
+
+print(f"Run configuration saved to: {RUN_CONFIG_PATH}")
+
+
+
+
 
 def compute_log_returns(price_df):
     
@@ -1392,5 +1554,183 @@ but Historical VaR still appears to be the strongest overall benchmark.
 
 
 
+
+
+# ----- Save Reference Run Results -----
+
+static_risk_summary = VaR_summary.join(ES_summary)
+static_risk_summary.index.name = "Model"
+
+static_risk_summary.to_csv(
+    REFERENCE_RESULTS_DIR / "static_var_es_summary.csv"
+)
+
+mc_convergence.to_csv(
+    REFERENCE_RESULTS_DIR / "monte_carlo_convergence.csv",
+    index=False,
+)
+
+
+reference_models = [
+    {
+        "model": "Historical",
+        "var": historical_var_series,
+        "pnl": pnl_test,
+        "var_nonoverlap": hist_var_nonoverlap,
+        "pnl_nonoverlap": hist_pnl_nonoverlap,
+        "kupiec_lr": his_kupiec_LR,
+        "kupiec_lr_nonoverlap": his_kupiec_LR_NO,
+        "independence_lr": his_ind_lr,
+        "conditional_coverage_lr": his_cc_lr,
+        "traffic": traffic_hist,
+    },
+    {
+        "model": "Parametric",
+        "var": parametric_var_series,
+        "pnl": pnl_test,
+        "var_nonoverlap": para_var_nonoverlap,
+        "pnl_nonoverlap": para_pnl_nonoverlap,
+        "kupiec_lr": para_kupiec_LR,
+        "kupiec_lr_nonoverlap": para_kupiec_LR_NO,
+        "independence_lr": para_ind_lr,
+        "conditional_coverage_lr": para_cc_lr,
+        "traffic": traffic_para,
+    },
+    {
+        "model": "Monte Carlo",
+        "var": mc_var_series,
+        "pnl": pnl_test,
+        "var_nonoverlap": mc_var_nonoverlap,
+        "pnl_nonoverlap": mc_pnl_nonoverlap,
+        "kupiec_lr": mc_kupiec_LR,
+        "kupiec_lr_nonoverlap": mc_kupiec_LR_NO,
+        "independence_lr": mc_ind_lr,
+        "conditional_coverage_lr": mc_cc_lr,
+        "traffic": traffic_mc,
+    },
+    {
+        "model": "EWMA",
+        "var": ewma_VaR_series,
+        "pnl": ewma_pnl_test,
+        "var_nonoverlap": ewma_VaR_nonoverlap,
+        "pnl_nonoverlap": ewma_pnl_nonoverlap,
+        "kupiec_lr": ewma_kupiec_LR,
+        "kupiec_lr_nonoverlap": ewma_kupiec_LR_NO,
+        "independence_lr": ewma_ind_lr,
+        "conditional_coverage_lr": ewma_cc_lr,
+        "traffic": traffic_ewma,
+    },
+    {
+        "model": "GARCH",
+        "var": garch_var_series,
+        "pnl": garch_pnl_test,
+        "var_nonoverlap": garch_var_nonoverlap,
+        "pnl_nonoverlap": garch_pnl_nonoverlap,
+        "kupiec_lr": garch_kupiec_LR,
+        "kupiec_lr_nonoverlap": garch_kupiec_LR_NO,
+        "independence_lr": garch_ind_lr,
+        "conditional_coverage_lr": garch_cc_lr,
+        "traffic": traffic_garch,
+    },
+    {
+        "model": "FHS",
+        "var": fhs_var_series,
+        "pnl": fhs_pnl_test,
+        "var_nonoverlap": fhs_var_nonoverlap,
+        "pnl_nonoverlap": fhs_pnl_nonoverlap,
+        "kupiec_lr": fhs_kupiec_LR,
+        "kupiec_lr_nonoverlap": fhs_kupiec_LR_NO,
+        "independence_lr": fhs_ind_lr,
+        "conditional_coverage_lr": fhs_cc_lr,
+        "traffic": traffic_fhs,
+    },
+]
+
+
+backtesting_rows = []
+
+for result in reference_models:
+    violations = result["pnl"] < -result["var"]
+
+    nonoverlap_violations = (
+        result["pnl_nonoverlap"]
+        < -result["var_nonoverlap"]
+    )
+
+    traffic_zone_ratio = (
+        result["traffic"]["Zone"]
+        .value_counts(normalize=True)
+        .reindex(
+            ["Green", "Yellow", "Red"],
+            fill_value=0.0,
+        )
+    )
+
+    backtesting_rows.append({
+        "Model": result["model"],
+        "Observations": len(result["var"]),
+        "Average VaR": result["var"].mean(),
+        "Violations": int(violations.sum()),
+        "Violation Rate": violations.mean(),
+        "Kupiec LR": result["kupiec_lr"],
+        "Non-overlapping Observations": len(
+            result["var_nonoverlap"]
+        ),
+        "Non-overlapping Violations": int(
+            nonoverlap_violations.sum()
+        ),
+        "Non-overlapping Violation Rate": (
+            nonoverlap_violations.mean()
+        ),
+        "Kupiec LR (Non-overlapping)": (
+            result["kupiec_lr_nonoverlap"]
+        ),
+        "Independence LR (Non-overlapping)": (
+            result["independence_lr"]
+        ),
+        "Conditional Coverage LR (Non-overlapping)": (
+            result["conditional_coverage_lr"]
+        ),
+        "Traffic Light Avg Violations": (
+            result["traffic"]["Violations"].mean()
+        ),
+        "Traffic Green Ratio": traffic_zone_ratio["Green"],
+        "Traffic Yellow Ratio": traffic_zone_ratio["Yellow"],
+        "Traffic Red Ratio": traffic_zone_ratio["Red"],
+    })
+
+
+backtesting_summary = pd.DataFrame(backtesting_rows)
+
+backtesting_summary.to_csv(
+    REFERENCE_RESULTS_DIR / "backtesting_summary.csv",
+    index=False,
+)
+
+
+rolling_forecasts = pd.concat(
+    {
+        "Realized 5-day PnL": forward_pnl,
+        "Historical VaR": historical_var_series,
+        "Parametric VaR": parametric_var_series,
+        "Monte Carlo VaR": mc_var_series,
+        "EWMA VaR": ewma_VaR_series,
+        "GARCH VaR": garch_var_series,
+        "FHS VaR": fhs_var_series,
+    },
+    axis=1,
+)
+
+rolling_forecasts.index.name = "Date"
+
+rolling_forecasts.to_csv(
+    REFERENCE_RESULTS_DIR / "rolling_var_forecasts.csv"
+)
+
+
+print("\nReference Run results saved:")
+print(static_risk_summary.round(2))
+print(backtesting_summary.round(6))
+print(f"Output directory: {REFERENCE_RESULTS_DIR}")
 
 

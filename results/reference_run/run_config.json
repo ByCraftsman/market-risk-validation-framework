@@ -1,0 +1,48 @@
+{
+    "reference_run_id": "market-risk-2006-2025-seed42",
+    "requested_sample": {
+        "start_date": "2006-01-01",
+        "end_date_exclusive": "2026-01-01"
+    },
+    "actual_sample": {
+        "start_date": "2006-01-03",
+        "end_date": "2025-12-30",
+        "observations": 4774
+    },
+    "portfolio": {
+        "tickers": [
+            "^KS11",
+            "^KQ11",
+            "IEF",
+            "^GSPC"
+        ],
+        "weights": [
+            0.25,
+            0.25,
+            0.25,
+            0.25
+        ],
+        "portfolio_value": 1000000,
+        "currency": "USD",
+        "fx_risk_included": false
+    },
+    "risk_settings": {
+        "holding_period_days": 5,
+        "confidence_level": 0.99,
+        "estimation_window": 1000,
+        "random_seed": 42
+    },
+    "simulation_settings": {
+        "monte_carlo_simulations": 10000,
+        "fhs_simulations": 2000,
+        "ewma_lambda": 0.94,
+        "garch_specification": "GARCH(1,1)"
+    },
+    "data_snapshot": "data/market_prices_2006-01-01_2025-12-31.csv",
+    "environment": {
+        "python": "3.13.9",
+        "numpy": "2.3.5",
+        "pandas": "2.3.3",
+        "yfinance": "1.0"
+    }
+}
