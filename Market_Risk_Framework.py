@@ -3,7 +3,7 @@ import pandas as pd
 import datetime as dt
 import yfinance as yf
 import matplotlib.pyplot as plt
-from scipy.stats import norm
+from scipy.stats import norm, chi2
 from arch import arch_model
 from pathlib import Path
 import json
@@ -735,15 +735,19 @@ def kupiec_test(var, pnl, confidence=0.99):
         (n-x)*np.log(1-p) + x*np.log(p)
         - ((n-x)*np.log(1-p_hat) + x*np.log(p_hat))
     )
-    return likelihood_ratio, x
+    
+    p_value = chi2.sf(likelihood_ratio, df=1)
 
-his_kupiec_LR, his_kupiec_x = kupiec_test(historical_var_series, pnl_test)
-para_kupiec_LR, para_kupiec_x = kupiec_test(parametric_var_series, pnl_test)
-mc_kupiec_LR, mc_kupiec_x = kupiec_test(mc_var_series, pnl_test)
+    return likelihood_ratio, x, p_value
+
+his_kupiec_LR, his_kupiec_x, his_kupiec_p = kupiec_test(historical_var_series, pnl_test)
+para_kupiec_LR, para_kupiec_x, para_kupiec_p = kupiec_test(parametric_var_series, pnl_test)
+mc_kupiec_LR, mc_kupiec_x, mc_kupiec_p = kupiec_test(mc_var_series, pnl_test)
 
 kupiec_test_results = pd.DataFrame({
     "Method": ["Historical", "Parametric", "Monte Carlo"],
     "LR Statistic": [his_kupiec_LR, para_kupiec_LR, mc_kupiec_LR],
+    "p-value": [his_kupiec_p, para_kupiec_p, mc_kupiec_p],
     "Violations (x)": [his_kupiec_x, para_kupiec_x, mc_kupiec_x],
 })
 
@@ -923,13 +927,15 @@ mc_var_nonoverlap, mc_pnl_nonoverlap = make_non_overlapping_sample(
 
 
 #-----Kupiec Test on Non-overlapping Sample-----
-his_kupiec_LR_NO, his_kupiec_x_NO = kupiec_test(hist_var_nonoverlap, hist_pnl_nonoverlap)
-para_kupiec_LR_NO, para_kupiec_x_NO = kupiec_test(para_var_nonoverlap, para_pnl_nonoverlap)
-mc_kupiec_LR_NO, mc_kupiec_x_NO = kupiec_test(mc_var_nonoverlap, mc_pnl_nonoverlap)
+his_kupiec_LR_NO, his_kupiec_x_NO, his_kupiec_p_NO = kupiec_test(hist_var_nonoverlap, hist_pnl_nonoverlap)
+para_kupiec_LR_NO, para_kupiec_x_NO, para_kupiec_p_NO = kupiec_test(para_var_nonoverlap, para_pnl_nonoverlap)
+mc_kupiec_LR_NO, mc_kupiec_x_NO, mc_kupiec_p_NO = kupiec_test(mc_var_nonoverlap, mc_pnl_nonoverlap)
+
 
 kupiec_nonoverlap_results = pd.DataFrame({
     "Method": ["Historical", "Parametric", "Monte Carlo"],
     "LR Statistic (Non-overlapping)": [his_kupiec_LR_NO, para_kupiec_LR_NO, mc_kupiec_LR_NO],
+    "p-value": [his_kupiec_p_NO, para_kupiec_p_NO, mc_kupiec_p_NO,],
     "Violations (x)": [his_kupiec_x_NO, para_kupiec_x_NO, mc_kupiec_x_NO]
 })
 
@@ -1037,15 +1043,19 @@ def christoffersen_independence_test(var, pnl):
         )
     )
 
-    return LR_ind, (n00, n01, n10, n11)
+    p_value = chi2.sf(LR_ind, df=1)
 
-his_ind_lr, his_trans = christoffersen_independence_test(hist_var_nonoverlap, hist_pnl_nonoverlap)
-para_ind_lr, para_trans = christoffersen_independence_test(para_var_nonoverlap, para_pnl_nonoverlap)
-mc_ind_lr, mc_trans = christoffersen_independence_test(mc_var_nonoverlap, mc_pnl_nonoverlap)
+    return LR_ind, (n00, n01, n10, n11), p_value
+
+his_ind_lr, his_trans, his_ind_p = christoffersen_independence_test(hist_var_nonoverlap, hist_pnl_nonoverlap)
+para_ind_lr, para_trans, para_ind_p = christoffersen_independence_test(para_var_nonoverlap, para_pnl_nonoverlap)
+mc_ind_lr, mc_trans, mc_ind_p = christoffersen_independence_test(mc_var_nonoverlap, mc_pnl_nonoverlap)
 
 independence_results = pd.DataFrame({
     "Method": ["Historical", "Parametric", "Monte Carlo"],
-    "LR Independence (Non-overlapping)": [his_ind_lr, para_ind_lr, mc_ind_lr],})
+    "LR Independence (Non-overlapping)": [his_ind_lr, para_ind_lr, mc_ind_lr],
+    "p-value": [his_ind_p, para_ind_p, mc_ind_p,]
+    })
 
 print(independence_results)
 print(his_trans)
@@ -1071,18 +1081,20 @@ violations persist from one observation to the next.
 
 #-----Christoffersen Conditional Coverage Test (Non-overlapping)-----
 def conditional_coverage_test(lr_uc, lr_ind):
-    return lr_uc + lr_ind
+    lr_cc = lr_uc + lr_ind
+    p_value = chi2.sf(lr_cc, df=2)
 
-his_cc_lr = conditional_coverage_test(his_kupiec_LR_NO, his_ind_lr)
-para_cc_lr = conditional_coverage_test(para_kupiec_LR_NO, para_ind_lr)
-mc_cc_lr = conditional_coverage_test(mc_kupiec_LR_NO, mc_ind_lr)
+    return lr_cc, p_value
+
+his_cc_lr, his_cc_p = conditional_coverage_test(his_kupiec_LR_NO, his_ind_lr)
+para_cc_lr, para_cc_p = conditional_coverage_test(para_kupiec_LR_NO, para_ind_lr)
+mc_cc_lr, mc_cc_p = conditional_coverage_test(mc_kupiec_LR_NO, mc_ind_lr)
 
 cc_results = pd.DataFrame({
     "Method": ["Historical", "Parametric", "Monte Carlo"],
-    "LR_CC (Non-overlapping)": [
-        his_cc_lr,
-        para_cc_lr,
-        mc_cc_lr]})
+    "LR_CC (Non-overlapping)": [his_cc_lr, para_cc_lr, mc_cc_lr],
+    "p-value": [his_cc_p, para_cc_p, mc_cc_p],
+})
 
 print(cc_results)
 
@@ -1172,7 +1184,7 @@ def compute_ewma_VaR_series(
     # Convert 1-day EWMA volatility into multi-day monetary VaR
     # under normality using square-root-of-time scaling
     ewma_VaR_series = value * z * ewma_volatility * np.sqrt(horizon)
-
+    
     return ewma_VaR_series, ewma_volatility
 
 ewma_VaR_series, ewma_volatility = compute_ewma_VaR_series(
@@ -1199,7 +1211,7 @@ print("EWMA Violation Rate:", ewma_violations.mean())
 print("EWMA Average 5-day VaR:", ewma_VaR_series.mean())
 
 # Kupiec and Traffic Light
-ewma_kupiec_LR, ewma_kupiec_x = kupiec_test(ewma_VaR_series, ewma_pnl_test)
+ewma_kupiec_LR, ewma_kupiec_x, ewma_kupiec_p = kupiec_test(ewma_VaR_series, ewma_pnl_test)
 traffic_ewma = traffic_light_rolling(ewma_VaR_series, ewma_pnl_test)
 
 print("EWMA Kupiec LR:", ewma_kupiec_LR)
@@ -1209,9 +1221,9 @@ print("EWMA Avg Violations (250-day window):", traffic_ewma["Violations"].mean()
 ewma_VaR_nonoverlap, ewma_pnl_nonoverlap = make_non_overlapping_sample(
     ewma_VaR_series, ewma_pnl_test, horizon=5, start=0)
 
-ewma_kupiec_LR_NO, _ = kupiec_test(ewma_VaR_nonoverlap, ewma_pnl_nonoverlap)
-ewma_ind_lr, _ = christoffersen_independence_test(ewma_VaR_nonoverlap, ewma_pnl_nonoverlap)
-ewma_cc_lr = conditional_coverage_test(ewma_kupiec_LR_NO, ewma_ind_lr)
+ewma_kupiec_LR_NO, _, ewma_kupiec_p_NO = kupiec_test(ewma_VaR_nonoverlap, ewma_pnl_nonoverlap)
+ewma_ind_lr, _, ewma_ind_p = christoffersen_independence_test(ewma_VaR_nonoverlap, ewma_pnl_nonoverlap)
+ewma_cc_lr, ewma_cc_p = conditional_coverage_test(ewma_kupiec_LR_NO, ewma_ind_lr)
 
 print("EWMA Kupiec LR (Non-overlapping):", ewma_kupiec_LR_NO)
 print("EWMA Conditional Coverage LR:", ewma_cc_lr)
@@ -1338,7 +1350,7 @@ print("GARCH Violation Rate:", garch_violations.mean())
 print("GARCH Average VaR:", garch_var_series.mean())
 
 # Kupiec and Traffic Light
-garch_kupiec_LR, _ = kupiec_test(garch_var_series, garch_pnl_test)
+garch_kupiec_LR, _, garch_kupiec_p = kupiec_test(garch_var_series, garch_pnl_test)
 traffic_garch = traffic_light_rolling(garch_var_series, garch_pnl_test)
 
 print("GARCH Kupiec LR:", garch_kupiec_LR)
@@ -1351,9 +1363,9 @@ garch_var_nonoverlap, garch_pnl_nonoverlap = make_non_overlapping_sample(
     horizon=5,
     start=0)
 
-garch_kupiec_LR_NO, _ = kupiec_test(garch_var_nonoverlap, garch_pnl_nonoverlap)
-garch_ind_lr, _ = christoffersen_independence_test(garch_var_nonoverlap, garch_pnl_nonoverlap)
-garch_cc_lr = conditional_coverage_test(garch_kupiec_LR_NO, garch_ind_lr)
+garch_kupiec_LR_NO, _, garch_kupiec_p_NO = kupiec_test(garch_var_nonoverlap, garch_pnl_nonoverlap)
+garch_ind_lr, _, garch_ind_p = christoffersen_independence_test(garch_var_nonoverlap, garch_pnl_nonoverlap)
+garch_cc_lr, garch_cc_p = conditional_coverage_test(garch_kupiec_LR_NO, garch_ind_lr)
 
 print("GARCH Kupiec LR (Non-overlapping):", garch_kupiec_LR_NO)
 print("GARCH Conditional Coverage LR:", garch_cc_lr)
@@ -1507,7 +1519,7 @@ print("FHS Violations:", fhs_violations.sum())
 print("FHS Violation Rate:", fhs_violations.mean())
 print("FHS Average VaR:", fhs_var_series.mean())
 
-fhs_kupiec_LR, fhs_kupiec_x = kupiec_test(fhs_var_series, fhs_pnl_test)
+fhs_kupiec_LR, fhs_kupiec_x, fhs_kupiec_p = kupiec_test(fhs_var_series, fhs_pnl_test)
 traffic_fhs = traffic_light_rolling(fhs_var_series, fhs_pnl_test)
 
 print("FHS Kupiec LR:", fhs_kupiec_LR)
@@ -1520,9 +1532,9 @@ fhs_var_nonoverlap, fhs_pnl_nonoverlap = make_non_overlapping_sample(
     start=0
 )
 
-fhs_kupiec_LR_NO, fhs_kupiec_x_NO = kupiec_test(fhs_var_nonoverlap, fhs_pnl_nonoverlap)
-fhs_ind_lr, fhs_trans = christoffersen_independence_test(fhs_var_nonoverlap, fhs_pnl_nonoverlap)
-fhs_cc_lr = conditional_coverage_test(fhs_kupiec_LR_NO, fhs_ind_lr)
+fhs_kupiec_LR_NO, fhs_kupiec_x_NO, fhs_kupiec_p_NO = kupiec_test(fhs_var_nonoverlap, fhs_pnl_nonoverlap)
+fhs_ind_lr, fhs_trans, fhs_ind_p = christoffersen_independence_test(fhs_var_nonoverlap, fhs_pnl_nonoverlap)
+fhs_cc_lr, fhs_cc_p = conditional_coverage_test(fhs_kupiec_LR_NO, fhs_ind_lr)
 
 print("FHS Kupiec LR (Non-overlapping):", fhs_kupiec_LR_NO)
 print("FHS Conditional Coverage LR:", fhs_cc_lr)
@@ -1556,7 +1568,7 @@ but Historical VaR still appears to be the strongest overall benchmark.
 
 
 
-# ----- Save Reference Run Results -----
+#-----Save Reference Run Results-----
 
 static_risk_summary = VaR_summary.join(ES_summary)
 static_risk_summary.index.name = "Model"
@@ -1583,6 +1595,10 @@ reference_models = [
         "independence_lr": his_ind_lr,
         "conditional_coverage_lr": his_cc_lr,
         "traffic": traffic_hist,
+        "kupiec_p": his_kupiec_p,
+        "kupiec_p_nonoverlap": his_kupiec_p_NO,
+        "independence_p": his_ind_p,
+        "conditional_coverage_p": his_cc_p,
     },
     {
         "model": "Parametric",
@@ -1595,6 +1611,10 @@ reference_models = [
         "independence_lr": para_ind_lr,
         "conditional_coverage_lr": para_cc_lr,
         "traffic": traffic_para,
+        "kupiec_p": para_kupiec_p,
+        "kupiec_p_nonoverlap": para_kupiec_p_NO,
+        "independence_p": para_ind_p,
+        "conditional_coverage_p": para_cc_p,
     },
     {
         "model": "Monte Carlo",
@@ -1607,6 +1627,10 @@ reference_models = [
         "independence_lr": mc_ind_lr,
         "conditional_coverage_lr": mc_cc_lr,
         "traffic": traffic_mc,
+        "kupiec_p": mc_kupiec_p,
+        "kupiec_p_nonoverlap": mc_kupiec_p_NO,
+        "independence_p": mc_ind_p,
+        "conditional_coverage_p": mc_cc_p,
     },
     {
         "model": "EWMA",
@@ -1619,6 +1643,10 @@ reference_models = [
         "independence_lr": ewma_ind_lr,
         "conditional_coverage_lr": ewma_cc_lr,
         "traffic": traffic_ewma,
+        "kupiec_p": ewma_kupiec_p,
+        "kupiec_p_nonoverlap": ewma_kupiec_p_NO,
+        "independence_p": ewma_ind_p,
+        "conditional_coverage_p": ewma_cc_p,
     },
     {
         "model": "GARCH",
@@ -1631,6 +1659,10 @@ reference_models = [
         "independence_lr": garch_ind_lr,
         "conditional_coverage_lr": garch_cc_lr,
         "traffic": traffic_garch,
+        "kupiec_p": garch_kupiec_p,
+        "kupiec_p_nonoverlap": garch_kupiec_p_NO,
+        "independence_p": garch_ind_p,
+        "conditional_coverage_p": garch_cc_p,
     },
     {
         "model": "FHS",
@@ -1643,6 +1675,10 @@ reference_models = [
         "independence_lr": fhs_ind_lr,
         "conditional_coverage_lr": fhs_cc_lr,
         "traffic": traffic_fhs,
+        "kupiec_p": fhs_kupiec_p,
+        "kupiec_p_nonoverlap": fhs_kupiec_p_NO,
+        "independence_p": fhs_ind_p,
+        "conditional_coverage_p": fhs_cc_p,
     },
 ]
 
@@ -1673,6 +1709,7 @@ for result in reference_models:
         "Violations": int(violations.sum()),
         "Violation Rate": violations.mean(),
         "Kupiec LR": result["kupiec_lr"],
+        "Kupiec p-value": result["kupiec_p"],
         "Non-overlapping Observations": len(
             result["var_nonoverlap"]
         ),
@@ -1685,11 +1722,20 @@ for result in reference_models:
         "Kupiec LR (Non-overlapping)": (
             result["kupiec_lr_nonoverlap"]
         ),
+        "Kupiec p-value (Non-overlapping)": (
+            result["kupiec_p_nonoverlap"]
+        ),
         "Independence LR (Non-overlapping)": (
             result["independence_lr"]
         ),
+        "Independence p-value (Non-overlapping)": (
+            result["independence_p"]
+        ),
         "Conditional Coverage LR (Non-overlapping)": (
             result["conditional_coverage_lr"]
+        ),
+        "Conditional Coverage p-value (Non-overlapping)": (
+            result["conditional_coverage_p"]
         ),
         "Traffic Light Avg Violations": (
             result["traffic"]["Violations"].mean()
