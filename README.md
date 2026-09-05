@@ -1,60 +1,84 @@
-# Market Risk Framework (VaR, ES, and Backtesting)
-- **File:** [`Market_Risk_Framework.py`](./Market_Risk_Framework.py)
+# Market Risk Validation Framework
 
-Built an end-to-end market risk framework in Python for multi-method VaR/ES estimation, rolling-window forecasting, backtesting, and volatility-based model extensions.
+An end-to-end Python framework for rolling VaR forecasting, forward-PnL backtesting, and comparative model validation.
 
-## Portfolio Setting
-The test portfolio is intentionally simplified as an equal-weighted cross-asset mix of:
+## Overview
 
-- **KOSPI Composite Index**
-- **Kosdaq Composite Index**
-- **iShares 7–10 Year Treasury Bond ETF (IEF)**
-- **S&P 500 Index**
+This project applies and interprets several Value-at-Risk (VaR) methodologies within a common portfolio and model-validation framework. Its primary objective is to examine how different modeling assumptions affect estimated market risk and whether the resulting VaR forecasts are consistent with realized portfolio losses.
 
-This portfolio is intended for transparent model comparison rather than replicating an actual trading desk portfolio. 
-The goal is to provide a clear setting for comparing model behavior, backtesting performance, and differences in tail-risk sensitivity across market risk approaches.
+Historical Simulation, variance-covariance VaR, and Monte Carlo Simulation are first used to compare static risk estimates and their underlying distributional assumptions. The analysis then moves from point-in-time measurement to rolling five-day VaR forecasts, with each forecast aligned to the realized forward PnL at the same forecast origin.
 
-## Key Features
-- Implements **Historical, Parametric, and Monte Carlo VaR/ES**
-- Uses a **rolling-window framework** to update VaR forecasts over time
-- Applies a structured validation framework:
-  - **Kupiec test** (unconditional coverage)
-  - **Christoffersen independence test**
-  - **Conditional coverage test**
-  - **Basel-style traffic light interpretation**
-- Compares **overlapping** and **non-overlapping** backtesting results
-- Extends the framework with **EWMA, GARCH(1,1), and Filtered Historical Simulation (FHS)**
-- Includes supporting analysis such as:
-  - Monte Carlo simulation convergence checks
-  - interpretation of tail-risk underestimation
-  - analysis of overlap-induced violation clustering
+Model performance is evaluated through violation frequencies, unconditional coverage, violation independence, conditional coverage, and Basel-style traffic-light diagnostics. Overlapping and non-overlapping backtesting samples are reported separately to distinguish model calibration from dependence mechanically introduced by multi-day PnL windows.
 
-## Main Insight
-Within this portfolio and sample setting, Historical VaR appears to be the best-calibrated model among the baseline models, while Parametric and Monte Carlo VaR tend to underestimate tail risk under normality-based assumptions.
+EWMA, GARCH(1,1), and Filtered Historical Simulation are subsequently introduced to examine whether time-varying volatility and empirically resampled shocks improve tail-risk measurement relative to the baseline models. Expected Shortfall is included as a supplementary static measure of loss severity beyond the VaR threshold.
 
-Non-overlapping tests further suggest that part of the observed violation clustering is mechanically induced by overlapping forward PnL construction, leading to a cleaner interpretation of independence and conditional coverage results.
+Rather than treating VaR as a single reported number, the project focuses on three practical questions:
 
-Among the volatility-based extensions, FHS shows the strongest performance, materially improving tail-risk calibration relative to EWMA and standard GARCH.
+* How do methodology and distributional assumptions affect estimated VaR?
+* Do observed losses breach the forecasts at a frequency consistent with the stated confidence level?
+* How should backtesting results be interpreted when the holding period creates overlapping realized PnL?
 
-Overall, Historical VaR remains the strongest model in this framework, with FHS emerging as the most effective volatility-based extension.
 
-## Project Evolution
-This project began as a basic implementation of three VaR methods: Historical, Parametric, and Monte Carlo.
+## Key Findings
 
-As the framework expanded, the focus moved beyond point estimation toward model validation and backtesting.  
-This led to several important extensions:
+* **Historical VaR provided the best overall calibration in this reference run.** Its violation rate was 1.01% in the full overlapping sample and 0.80% in the non-overlapping sample, both close to the 1% rate implied by a 99% VaR model.
 
-- moving from single VaR estimates to rolling VaR series
-- constructing forward PnL for proper backtesting alignment
-- distinguishing estimation inputs from realized backtesting targets
-- comparing overlapping and non-overlapping samples
-- identifying how overlapping forward PnL can mechanically distort independence test results
-- extending static models into volatility-updating and filtered simulation frameworks
+* **Parametric and Monte Carlo VaR materially underestimated tail risk.** Both produced an overlapping violation rate of 2.21%. Their results were nearly identical because both models used the same historical covariance structure and normal-distribution assumption.
 
-Through this process, the project evolved from a basic VaR implementation into a broader market risk validation framework.
+* **Dynamic volatility modeling did not automatically improve coverage.** EWMA and GARCH produced violation rates of 4.22% and 3.53%, respectively. Updating conditional volatility was not sufficient to capture the observed multi-day tail losses under normal innovations and square-root-of-time scaling.
 
-## Modeling Assumptions
-- The project is designed for risk-model comparison and interpretation
-- The framework uses a 5-day holding period and 99% confidence level
-- Mean returns are assumed to be zero for short-horizon parametric and simulation-based VaR
-- FX risk is excluded for analytical clarity, although the portfolio includes both Korean and US market instruments
+* **FHS was the strongest volatility-based extension.** Its 1.99% violation rate was materially lower than those of EWMA and GARCH because it combined GARCH volatility filtering with empirically resampled standardized residuals. However, it still exceeded the expected 1% rate and did not achieve full coverage at the 5% significance level.
+
+* **Coverage and independence provide different information.** Historical VaR passed the non-overlapping Kupiec coverage test with a p-value of 0.561, while its independence p-value of 0.034 indicated some remaining evidence of breach dependence. Its joint conditional-coverage p-value was 0.089.
+
+* **Full overlapping and non-overlapping samples are reported separately.** The non-overlapping sample reduces the mechanical serial dependence created by overlapping five-day PnL windows and provides a more appropriate basis for the independence and conditional-coverage tests.
+
+![Overlapping and non-overlapping VaR violation rates across models](figures/violation_rate_comparison.png)
+
+## Reference Portfolio and Configuration
+
+The portfolio is intentionally simplified to provide a transparent environment for comparing model behavior. It is not intended to replicate the positions, risk factors, or operational constraints of a trading-desk portfolio.
+
+### Portfolio Composition
+
+| Asset                               | Ticker  | Market exposure                       | Weight | Price field    |
+| ----------------------------------- | ------- | ------------------------------------- | -----: | -------------- |
+| KOSPI Composite Index               | `^KS11` | Broad Korean main-board equities      |    25% | Close          |
+| Kosdaq Composite Index              | `^KQ11` | Korean secondary-market and growth-oriented equities |    25% | Close          |
+| iShares 7–10 Year Treasury Bond ETF | `IEF`   | Intermediate US Treasury bonds        |    25% | Adjusted Close |
+| S&P 500 Index                       | `^GSPC` | US large-cap equities                 |    25% | Close          |
+
+IEF uses Adjusted Close to reflect distributions and other price adjustments. The equity indices use unadjusted closing index levels.
+
+### Reference Run
+
+| Setting                          | Reference value                              |
+| -------------------------------- | -------------------------------------------- |
+| Sample period                    | 2006-01-03 to 2025-12-30                     |
+| Price observations               | 4,774                                        |
+| Rolling backtesting observations | 3,764                                        |
+| Non-overlapping observations     | 753                                          |
+| Portfolio notional               | USD 1,000,000                                |
+| Portfolio weights                | Constant 25% weights                         |
+| Return measure                   | Daily log returns                            |
+| VaR confidence level             | 99%                                          |
+| Holding period                   | 5 trading days                               |
+| Rolling estimation window        | 1,000 observations                           |
+| Monte Carlo simulations          | 10,000                                       |
+| EWMA decay factor                | 0.94                                         |
+| EWMA initialization window       | 60 observations                              |
+| GARCH specification              | Zero-mean GARCH(1,1) with normal innovations |
+| FHS simulations                  | 2,000 per forecast                           |
+| FX assumption                    | FX-neutral; exchange-rate movements and hedging costs are not modeled |
+| Random seed                      | 42                                           |
+| Reference run identifier         | market-risk-2006-2025-seed42                 |
+
+### Data and Modeling Conventions
+
+* Market data are obtained through Yahoo Finance and preserved in a local snapshot for reproducible reference results.
+* Asset return series are aligned to their common available dates before portfolio returns are calculated.
+* Constant portfolio weights are applied to each day’s asset returns, corresponding to an implicitly rebalanced constant-mix portfolio rather than a buy-and-hold allocation.
+* Parametric, Monte Carlo, EWMA, and GARCH VaR assume zero expected return over the short forecast horizon.
+* Multi-day normal VaR estimates use square-root-of-time scaling.
+* KOSPI and Kosdaq are included to broaden the test portfolio beyond US markets and expose the models to local-equity returns with different volatility and tail characteristics. Korean index returns are evaluated in local-currency terms, while the USD 1 million portfolio value serves only as a common notional for converting returns into monetary VaR and PnL. The results therefore represent an FX-neutral methodological benchmark rather than the realized risk of an unhedged USD investor.
+
