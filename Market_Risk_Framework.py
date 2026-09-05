@@ -922,49 +922,66 @@ print("EWMA Conditional Coverage LR:", ewma_cc_lr)
 
 
 # GARCH VaR
-def compute_garch_volatility(returns, scale=100):
-    """Estimate conditional volatility using a GARCH(1,1) model.
+def rolling_garch_VaR(returns, window=1000, value=1000000, 
+                      horizon=5, confidence=0.99, scale=100):
+    """Estimate rolling multi-period VaR using a GARCH(1,1) model.
+
+    At each forecast origin, the model is fitted using only the
+    preceding estimation window. The holding-period variance is
+    obtained by summing the model-implied daily variance forecasts.
 
     The model assumes a zero conditional mean and normally distributed
     innovations. Returns are scaled during estimation for numerical
-    stability, and conditional volatility is subsequently converted
-    back to the original return scale.
+    stability, and forecast variances are converted back to the
+    original return scale.
     """
 
-    scaled_returns = returns * scale
+    var_list = []
+    volatility_list = []
+    index_list = []
 
-    model = arch_model(scaled_returns, mean='Zero', vol='GARCH', 
-                       p=1, q=1, dist='normal')
-
-    result = model.fit(disp='off')
-
-    garch_vol = result.conditional_volatility / scale
-
-    return pd.Series(garch_vol, index=returns.index), result
-
-
-def compute_garch_var_series(returns, value=1000000, horizon=5, confidence=0.99):
-    """Convert GARCH conditional volatility into multi-period VaR.
-
-    Daily conditional volatility is converted into monetary VaR under
-    normality and scaled to the holding period using the square-root-
-    of-time rule.
-    """
-
-    garch_vol, garch_result = compute_garch_volatility(returns)
     z = norm.ppf(confidence)
 
-    garch_var_series = value * z * garch_vol * np.sqrt(horizon)
+    for i in range(window, len(returns) - horizon):
 
-    return garch_var_series, garch_vol, garch_result
+        # Use only information available before the forecast origin.
+        sample_returns = returns.iloc[i - window:i]
+        scaled_sample = sample_returns * scale
 
-# Fit a portfolio-level univariate model for direct comparison
+        model = arch_model(scaled_sample, mean="Zero", vol="GARCH", 
+                           p=1, q=1, dist="normal")
+
+        result = model.fit(disp="off")
+
+        # Forecast daily conditional variances over the holding period.
+        variance_forecast = (result.forecast(horizon=horizon, reindex=False)
+                             .variance.iloc[-1].to_numpy() / scale**2)
+
+        # Under zero conditional mean, the variance of the cumulative
+        # holding-period return is the sum of daily forecast variances.
+        cumulative_variance = variance_forecast.sum()
+
+        var_t = value * z * np.sqrt(cumulative_variance)
+
+        var_list.append(var_t)
+        volatility_list.append(np.sqrt(variance_forecast[0]))
+        index_list.append(returns.index[i])
+
+    garch_var_series = pd.Series(var_list, index=index_list)
+
+    garch_volatility = pd.Series(volatility_list, index=index_list)
+
+    return garch_var_series, garch_volatility
+
+
+# Estimate portfolio-level rolling GARCH VaR for comparison
 # with the other portfolio VaR forecasts.
-garch_var_series, garch_vol, garch_result = compute_garch_var_series(
-    portfolio_returns, 
-    value=1000000,
-    horizon=5,
-    confidence=0.99)
+garch_var_series, garch_vol = rolling_garch_VaR(portfolio_returns,
+                                                window=1000,
+                                                value=1000000,
+                                                horizon=5,
+                                                confidence=0.99
+                                                )
 
 
 # GARCH Backtesting
