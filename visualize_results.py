@@ -1,3 +1,11 @@
+"""Generate figures from the saved reference_run outputs.
+
+This module loads the risk summaries and rolling forecasts produced by
+Market_Risk_Framework.py and saves publication-ready figures to the 
+figures directory.
+"""
+
+
 from pathlib import Path
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -15,7 +23,11 @@ ROLLING_FORECASTS_PATH = REFERENCE_RESULTS_DIR / "rolling_var_forecasts.csv"
 MODEL_ORDER = ["Historical", "Parametric", "Monte Carlo", "EWMA", "GARCH", "FHS"]
 
 
+
+
 def load_reference_results():
+    """Load the saved risk summaries and rolling VaR forecasts."""
+    
     required_files = [STATIC_RESULTS_PATH, BACKTEST_RESULTS_PATH, ROLLING_FORECASTS_PATH]
 
     missing_files = [path for path in required_files if not path.exists()]
@@ -30,7 +42,11 @@ def load_reference_results():
     return static_results, backtest_results, rolling_forecasts
 
 
+
+
 def save_figure(fig, filename):
+    """Save a figure to the project figures directory at 300 DPI."""
+    
     FIGURES_DIR.mkdir(parents=True, exist_ok=True)
     output_path = FIGURES_DIR / filename
     fig.savefig(output_path, dpi=300, bbox_inches="tight")
@@ -40,8 +56,9 @@ def save_figure(fig, filename):
 
 
 
-#----Static VaR & ES comparison----    
 def plot_static_var_es(static_results):
+    """Plot static VaR and ES for the three baseline models."""
+    
     plot_data = static_results.reindex(
         ["Historical", "Parametric", "Monte Carlo"]
     )
@@ -69,8 +86,9 @@ def plot_static_var_es(static_results):
 
 
 
-#----Overall violation rates----
 def plot_violation_rates(backtest_results):
+    """Compare overlapping and non-overlapping VaR breach rates."""
+    
     plot_data = (
         backtest_results
         .set_index("Model")
@@ -114,8 +132,9 @@ def plot_violation_rates(backtest_results):
 
 
 
-#----Traffic light overall performance----
 def plot_traffic_light_distribution(backtest_results):
+    """Plot Basel-style rolling traffic-light shares by model."""
+    
     plot_data = (
         backtest_results
         .set_index("Model")
@@ -141,7 +160,7 @@ def plot_traffic_light_distribution(backtest_results):
         width=0.72,
     )
 
-    ax.set_title("Rolling Basel Traffic-Light Distribution", pad=35)
+    ax.set_title("Rolling Basel-Style Traffic-Light Distribution", pad=35)
     ax.set_xlabel("")
     ax.set_ylabel("Share of rolling windows")
     ax.set_ylim(0, 100)
@@ -155,8 +174,9 @@ def plot_traffic_light_distribution(backtest_results):
 
 
 
-#----Overall model performance comparison----    
 def plot_rolling_var_backtests(rolling_forecasts):
+    """Plot realized PnL, VaR thresholds, and breaches for all models."""
+    
     pnl_column = "Realized 5-day PnL"
 
     var_columns = {
@@ -172,7 +192,13 @@ def plot_rolling_var_backtests(rolling_forecasts):
     VAR_THRESHOLD_COLOR = "#4472C4"
     BREACH_COLOR = "#C00000"
 
-    fig, axes = plt.subplots(nrows=3,ncols=2, figsize=(15, 13), sharex=True, sharey=True)
+    fig, axes = plt.subplots(
+        nrows=3,
+        ncols=2,
+        figsize=(15, 13),
+        sharex=True,
+        sharey=True
+        )
 
     for ax, model in zip(axes.flat, MODEL_ORDER):
         var_column = var_columns[model]
@@ -238,12 +264,14 @@ def plot_rolling_var_backtests(rolling_forecasts):
 
     fig.tight_layout(rect=[0.03, 0.065, 1, 0.945])
 
-    save_figure(fig,"rolling_var_backtests.png")    
+    save_figure(fig, "rolling_var_backtests.png")    
 
 
 
 
 def main():
+    """Generate all figures from the saved reference run."""
+    
     plt.style.use("seaborn-v0_8-whitegrid")
 
     static_results, backtest_results, rolling_forecasts = (
