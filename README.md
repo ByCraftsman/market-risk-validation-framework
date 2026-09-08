@@ -21,17 +21,23 @@ Together, these components apply established static and dynamic VaR methodologie
 
 ## Key Findings
 
-* **Historical VaR provided the best overall calibration in this reference run.** Its violation rate was 1.01% in the full overlapping sample and 0.80% in the non-overlapping sample, both close to the 1% rate implied by a 99% VaR model.
+### Static VaR and Expected Shortfall
 
-* **Parametric and Monte Carlo VaR materially underestimated tail risk.** Both produced an overlapping violation rate of 2.21%. Their results were nearly identical because both models used the same historical covariance structure and normal-distribution assumption.
+* **Historical Simulation produced substantially larger full-sample static tail-risk estimates than the normal-based approaches.** The static analysis produced one five-day VaR and Expected Shortfall estimate for each model using the full reference sample. Historical VaR was USD 59,357, compared with USD 40,330 for Parametric VaR and USD 40,365 for Monte Carlo VaR. Historical Expected Shortfall was USD 87,802, compared with USD 46,204 and USD 46,725, respectively.
 
-* **Dynamic volatility modeling did not automatically improve coverage.** EWMA and Rolling GARCH produced violation rates of 4.22% and 3.48%, respectively. Updating conditional volatility was not sufficient to capture the observed multi-day tail losses under normal innovations, despite the models’ different volatility dynamics and horizon aggregation methods.
+    These results may indicate that the empirical loss distribution contained substantially more severe tail outcomes than the normal-based models captured in the reference sample.
 
-* **FHS was the strongest volatility-based extension.** Its 1.99% violation rate was materially lower than those of EWMA and GARCH because it combined GARCH volatility filtering with empirically resampled standardized residuals. However, it still exceeded the expected 1% rate and did not achieve full coverage at the 5% significance level.
+### Rolling VaR Backtesting
 
-* **Coverage and independence provide different information.** Historical VaR passed the non-overlapping Kupiec coverage test with a p-value of 0.561, while its independence p-value of 0.034 indicated some remaining evidence of breach dependence. Its joint conditional-coverage p-value was 0.089.
+* **Historical VaR produced coverage closest to the nominal 99% confidence level, but it did not satisfy every diagnostic.** Its violation rate was 1.01% in the full overlapping sample and 0.80% in the non-overlapping sample. The Kupiec test did not reject correct unconditional coverage in either sample, with p-values of 0.953 and 0.561, respectively. In the non-overlapping sample, however, the independence test rejected at the 5% level with a p-value of 0.034, while the joint conditional-coverage test did not reject with a p-value of 0.089.
 
-* **Full overlapping and non-overlapping samples are reported separately.** The non-overlapping sample reduces the mechanical serial dependence created by overlapping five-day PnL windows and provides a more appropriate basis for the independence and conditional-coverage tests.
+* **Parametric and Monte Carlo VaR provided insufficient coverage in this reference run.** Both models produced an overlapping violation rate of 2.21% and a non-overlapping violation rate of 2.26%. In the non-overlapping sample, the Kupiec and conditional-coverage tests rejected their respective null hypotheses, with p-values of 0.003 and 0.008. Their results were nearly identical because both models used the same rolling covariance estimates, zero-mean normal assumption, and square-root-of-time scaling, apart from Monte Carlo simulation error.
+
+* **Time-varying volatility modeling under normal innovations did not automatically improve coverage.** EWMA and rolling GARCH produced overlapping violation rates of 4.22% and 3.48%, respectively, both substantially above the expected 1% rate. Their non-overlapping violation rates remained high at 3.98% and 3.32%, respectively. For both models, the non-overlapping Kupiec and conditional-coverage tests rejected their respective null hypotheses at the 5% significance level.
+
+* **FHS performed best among the volatility-based extensions in terms of coverage, but it remained insufficiently calibrated.** Its violation rate was 1.99% in both the overlapping and non-overlapping samples, materially lower than those of EWMA and rolling GARCH. This improvement is consistent with empirical standardized residuals retaining tail characteristics excluded by the normal-innovation models. Nevertheless, the non-overlapping Kupiec and conditional-coverage tests rejected at the 5% level, with p-values of 0.016 and 0.040, respectively.
+
+* **The main coverage findings were stable across overlapping and non-overlapping samples.** Removing overlap produced only limited changes in model violation rates and did not explain the high violation rates of the weaker models. The non-overlapping sample nevertheless provides a more appropriate basis for interpreting the coverage and independence tests.
 
 ## Reference Portfolio and Configuration
 
@@ -42,13 +48,13 @@ The portfolio is intentionally simplified to provide a transparent environment f
 | Asset                               | Ticker  | Market exposure                       | Weight | Price field    |
 | ----------------------------------- | ------- | ------------------------------------- | -----: | -------------- |
 | KOSPI Composite Index               | `^KS11` | Broad Korean main-board equities      |    25% | Close          |
-| Kosdaq Composite Index              | `^KQ11` | Korean secondary-market and growth-oriented equities |    25% | Close          |
+| KOSDAQ Composite Index              | `^KQ11` | Korean growth-oriented equities       |    25% | Close          |
 | iShares 7–10 Year Treasury Bond ETF | `IEF`   | Intermediate US Treasury bonds        |    25% | Adjusted Close |
 | S&P 500 Index                       | `^GSPC` | US large-cap equities                 |    25% | Close          |
 
 IEF uses Adjusted Close to reflect distributions and other price adjustments. The equity indices use unadjusted closing index levels.
 
-### Reference Run
+### Reference Run Configuration
 
 | Setting                          | Reference value                              |
 | -------------------------------- | -------------------------------------------- |
@@ -63,8 +69,9 @@ IEF uses Adjusted Close to reflect distributions and other price adjustments. Th
 | Holding period                   | 5 trading days                               |
 | Monte Carlo simulations          | 10,000                                       |
 | EWMA decay factor                | 0.94                                         |
-| EWMA initialization window       | 60 observations                              |
-| Rolling estimation window        | 1,000 observations for baseline, GARCH, and FHS models |
+| Historical estimation window	   | 1,000 overlapping five-period PnL observations |
+| Rolling estimation window        | 1,000 return observations for Parametric, Monte Carlo, GARCH, and FHS |
+| EWMA initialization window	   | 60 return observations; recursively updated thereafter |
 | GARCH specification              | Zero-mean GARCH(1,1) with normal innovations |
 | FHS simulations                  | 2,000 per forecast                           |
 | FX assumption                    | FX-neutral; exchange-rate movements and hedging costs are not modeled |
@@ -74,11 +81,12 @@ IEF uses Adjusted Close to reflect distributions and other price adjustments. Th
 ### Data and Modeling Conventions
 
 * Market data are obtained through Yahoo Finance and preserved in a local snapshot for reproducible reference results.
-* Asset return series are aligned to their common available dates before portfolio returns are calculated.
-* Constant portfolio weights are applied to each day’s asset returns, corresponding to an implicitly rebalanced constant-mix portfolio rather than a buy-and-hold allocation.
+* Price series are aligned to their common available dates before log returns are calculated. Each return observation spans consecutive dates in this aligned dataset, and the five-day horizon comprises five such observations. Matching calendar dates does not synchronize Korean and US market closing times.
+* Constant 25% weights are applied to asset log returns as an approximation to a rebalanced constant-mix portfolio. Monetary PnL is calculated by summing these weighted log returns over the holding period and multiplying by the fixed portfolio notional, using a linear approximation rather than exact compounded portfolio returns.
+* For estimation, Historical VaR uses overlapping holding-period PnL observations. Parametric and Monte Carlo VaR use asset-level returns, whereas EWMA, GARCH, and FHS use the weighted portfolio-return series.
 * Parametric, Monte Carlo, EWMA, and GARCH VaR assume zero expected return over the short forecast horizon.
-* Parametric, Monte Carlo, and EWMA VaR use square-root-of-time scaling. Rolling GARCH VaR instead aggregates the model-implied daily conditional-variance forecasts over the five-day holding period.
-* KOSPI and Kosdaq are included to broaden the test portfolio beyond US markets and expose the models to local-equity returns with different volatility and tail characteristics. Korean index returns are evaluated in local-currency terms, while the USD 1 million portfolio value serves only as a common notional for converting returns into monetary VaR and PnL. The results therefore represent an FX-neutral methodological benchmark rather than the realized risk of an unhedged USD investor.
+* Parametric, Monte Carlo, and EWMA VaR use square-root-of-time scaling. Rolling GARCH VaR sums the model-implied conditional-variance forecasts over the holding period and applies a normal quantile to the resulting volatility. FHS resamples empirical standardized residuals and updates conditional variance along each simulated path.
+* KOSPI and KOSDAQ are included to broaden the test portfolio beyond US markets. Korean index returns are evaluated in local-currency terms, while the USD 1 million portfolio value serves only as a common notional for converting returns into monetary VaR and PnL. The results therefore represent an FX-neutral methodological benchmark rather than the realized risk of an unhedged USD investor.
 
 ## Methodology
 
