@@ -1,22 +1,23 @@
 # Market Risk Validation Framework
 
-An end-to-end Python framework for rolling VaR forecasting, forward-PnL backtesting, and comparative model validation.
+A Python-based framework for multi-model Value-at-Risk (VaR) estimation, rolling forecasting, forward-PnL backtesting, and comparative model validation.
 
 ## Overview
 
-This project applies and interprets several Value-at-Risk (VaR) methodologies within a common portfolio and model-validation framework. Its primary objective is to examine how different modeling assumptions affect estimated market risk and whether the resulting VaR forecasts are consistent with realized portfolio losses.
+This project compares six VaR methodologies. It covers static VaR and Expected Shortfall estimation, rolling five-day VaR forecasting, and validation against aligned forward portfolio PnL.
 
-Historical Simulation, variance-covariance VaR, and Monte Carlo Simulation are first used to compare static risk estimates and their underlying distributional assumptions. The analysis then moves from point-in-time measurement to rolling five-day VaR forecasts, with each forecast aligned to the realized forward PnL at the same forecast origin.
+The baseline models are Historical Simulation, Parametric (Variance-Covariance), and Monte Carlo Simulation VaR. Expected Shortfall is included as a supplementary static measure of loss severity beyond the VaR threshold. The rolling analysis is then extended with EWMA, GARCH(1,1), and Filtered Historical Simulation to examine whether time-varying volatility and empirical residual resampling improve tail-risk measurement relative to the baseline models.
 
-Model performance is evaluated through violation frequencies, unconditional coverage, violation independence, conditional coverage, and Basel-style traffic-light diagnostics. Overlapping and non-overlapping backtesting samples are reported separately to distinguish model calibration from dependence mechanically introduced by multi-day PnL windows.
+Model performance is evaluated using violation counts and rates, the Kupiec unconditional-coverage test, the Christoffersen independence and conditional-coverage tests, and Basel-style traffic-light diagnostics. Results are reported for both overlapping and non-overlapping samples to distinguish model calibration from the mechanical dependence introduced by overlapping five-day PnL windows.
 
-EWMA, GARCH(1,1), and Filtered Historical Simulation are subsequently introduced to examine whether time-varying volatility and empirically resampled shocks improve tail-risk measurement relative to the baseline models. Expected Shortfall is included as a supplementary static measure of loss severity beyond the VaR threshold.
+Together, these components apply established static and dynamic VaR methodologies, examine the implications of their underlying assumptions, and implement a methodologically consistent rolling backtesting framework. The analysis is structured around six practical questions:
 
-Rather than treating VaR as a single reported number, the project focuses on three practical questions:
-
-* How do methodology and distributional assumptions affect estimated VaR?
-* Do observed losses breach the forecasts at a frequency consistent with the stated confidence level?
-* How should backtesting results be interpreted when the holding period creates overlapping realized PnL?
+* How can Historical Simulation, Parametric, and Monte Carlo VaR be applied consistently to the same portfolio and holding period?
+* How do empirical and normal-distribution-based methods differ in their estimates of VaR and Expected Shortfall?
+* How do EWMA and rolling GARCH(1,1) perform under normal innovations, and what changes when Filtered Historical Simulation replaces normal shocks with empirically resampled standardized residuals?
+* How should rolling five-day VaR forecasts be constructed and aligned with forward portfolio PnL to prevent look-ahead bias and horizon mismatches?
+* Do rolling 99% VaR forecasts produce the expected 1% violation rate, and do violations occur independently over time?
+* How does overlap in five-day PnL windows affect backtesting results and their statistical interpretation?
 
 ## Key Findings
 
