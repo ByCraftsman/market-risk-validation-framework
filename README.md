@@ -92,33 +92,43 @@ IEF uses Adjusted Close to reflect distributions and other price adjustments. Th
 
 The framework separates point-in-time risk measurement from forecast validation. Static VaR and Expected Shortfall provide an initial comparison of model assumptions, while rolling VaR forecasts evaluate whether those assumptions remain consistent with subsequently realized losses.
 
-At each rolling forecast origin, only information available before that date is used for model estimation. The resulting five-day VaR forecast is then aligned with the portfolio PnL realized over the following five trading days.
+At each rolling forecast origin, only information available before that date is used for model estimation. Each VaR forecast is matched to realized portfolio PnL over five consecutive return observations, beginning with the observation indexed by the forecast date.
+
 
 ### Framework Workflow
 
 ```mermaid
 flowchart TD
-    A["Saved market-price snapshot"] --> B["Common-date alignment"]
-    B --> C["Daily log returns"]
-    C --> D["Constant-weight portfolio returns"]
-    D --> E["Static VaR and ES estimation"]
-    D --> F["Rolling five-day VaR forecasts"]
-    F --> G["Forward-PnL alignment"]
-    G --> H["Backtesting diagnostics"]
-    E --> I["Reference tables and figures"]
-    H --> I
+    A["Load aligned price snapshot"] --> B["Asset log returns"]
+    B --> C["Weighted portfolio-return series"]
+
+    B --> D["Static VaR and ES"]
+    C --> D
+
+    B --> E["Rolling five-period VaR forecasts"]
+    C --> E
+    C --> F["Realized forward five-period PnL"]
+
+    E --> G["Align forecasts and realized PnL"]
+    F --> G
+
+    G --> H["Overlapping and non-overlapping samples"]
+    H --> I["Backtesting diagnostics"]
+
+    D --> J["Reference tables and comparison figures"]
+    I --> J
 ```
 
 The analysis proceeds through the following stages:
 
-1. Daily market prices are loaded from the saved reference snapshot.
-2. Asset price series are aligned to their common available dates.
-3. Daily log returns are calculated and aggregated using constant portfolio weights.
-4. Historical, Parametric, and Monte Carlo methods are used to estimate static VaR and ES.
-5. Rolling forecasts are generated using Historical, Parametric, Monte Carlo, GARCH, and FHS models, while EWMA volatility is updated recursively.
-6. Each VaR forecast is aligned with the realized forward five-day portfolio PnL.
-7. Forecast performance is evaluated through violation counts, coverage tests, independence tests, and traffic-light diagnostics.
-8. Consolidated results are saved as reproducible tables and converted into comparison figures.
+1. The saved reference price snapshot, already aligned to common available dates, is loaded.
+2. Asset log returns are calculated between consecutive common dates, and a weighted portfolio-return series is constructed.
+3. Historical, Parametric, and Monte Carlo methods are used to estimate static VaR and ES.
+4. Rolling five-period VaR forecasts are generated for all six models. Historical, Parametric, Monte Carlo, GARCH, and FHS use rolling estimation windows, while EWMA volatility is updated recursively.
+5. Realized forward five-period portfolio PnL is calculated and aligned with the VaR forecasts on common forecast dates.
+6. The aligned forecast–PnL pairs are evaluated using both the full overlapping sample and a non-overlapping sample selected at five-observation intervals.
+7. Forecast performance is evaluated using violation counts and rates, coverage and independence tests, and Basel-style traffic-light diagnostics.
+8. Reference results are saved as tables, and comparison figures are generated from the saved outputs.
 
 ### Risk Models
 
@@ -126,43 +136,43 @@ The analysis proceeds through the following stages:
 
 Historical Simulation estimates VaR directly from the empirical distribution of portfolio outcomes without imposing a parametric return distribution.
 
-For the static estimate, daily portfolio log returns are aggregated into overlapping five-day PnL observations. VaR is defined as the negative lower-tail empirical quantile:
+For the static estimate, the weighted portfolio log-return series is summed over overlapping five-observation windows and multiplied by portfolio notional to obtain PnL observations.
 
-```
-VaR_α = -Q_(1-α)(PnL)
-```
+$$
+\mathrm{VaR}_{\alpha}=-Q_{1-\alpha}(\mathrm{PnL})
+$$
 
-where `α` is the confidence level.
+where $\alpha$ is the confidence level.
 
-The rolling implementation applies the same empirical-quantile method to the preceding 1,000 five-day PnL observations at each forecast origin. Because it preserves realized skewness, kurtosis, and extreme historical losses, Historical Simulation provides a non-parametric benchmark. Its forecasts nevertheless remain dependent on the relevance and composition of the selected historical window.
+The rolling implementation applies the same empirical-quantile method to the preceding 1,000 overlapping five-period PnL observations at each forecast origin. Historical Simulation reflects the asymmetry and tail behavior observed in the selected sample without imposing normality. Its forecasts nevertheless depend on how representative that historical window is of future market conditions.
 
 #### Parametric VaR
 
 Parametric VaR uses the covariance matrix of daily asset returns to estimate portfolio volatility:
 
-```
-σ_p = sqrt(w'Σw)
-```
+$$
+\sigma_p=\sqrt{\mathbf{w}^{\top}\Sigma\mathbf{w}}
+$$
 
-where `w` is the portfolio-weight vector and `Σ` is the return covariance matrix.
+where $\mathbf{w}$ is the portfolio-weight vector and $\Sigma$ is the return covariance matrix.
 
-Under the assumptions of zero expected return, normally distributed returns, and independent daily innovations, five-day VaR is calculated as:
+Assuming zero expected returns, independent normally distributed return vectors across periods, and a covariance matrix held constant over the holding period, VaR is calculated as:
 
-```
-VaR_(t,h) = V * z_α * σ_(p,t) * sqrt(h)
-```
+$$
+\mathrm{VaR}_{t,h}=V z_{\alpha}\sigma_{p,t}\sqrt{h}
+$$
 
-where `V` is portfolio notional, `z_α` is the standard-normal quantile associated with confidence level `α`, and `h` is the holding period. The rolling model re-estimates the covariance matrix from the preceding 1,000 daily return observations.
+where $V$ is portfolio notional, $z_{\alpha}$ is the standard-normal quantile associated with confidence level $\alpha$, and $h$ is the holding period. The rolling model re-estimates the covariance matrix from the preceding 1,000 daily return observations.
 
 #### Monte Carlo VaR
 
-Monte Carlo VaR estimates the asset-return covariance matrix and generates correlated shocks from a multivariate normal distribution with zero mean. Simulated asset returns are aggregated using the portfolio weights and scaled to the five-day horizon under the independent-normal return assumption.
+Monte Carlo VaR estimates the asset-return covariance matrix and draws one-period asset-return vectors from a multivariate normal distribution with zero mean. Each vector is aggregated using the portfolio weights, scaled by the square root of the holding period, and multiplied by portfolio notional to obtain simulated PnL.
 
 VaR is obtained from the lower tail of the simulated portfolio PnL distribution:
 
-```
-VaR_α = -Q_(1-α)(PnL_sim)
-```
+$$
+\mathrm{VaR}_{\alpha}=-Q_{1-\alpha}\left(\mathrm{PnL}_{\mathrm{sim}}\right)
+$$
 
 The reference run uses 10,000 simulations for both the static estimate and each rolling forecast. Because the Parametric and Monte Carlo models share the same covariance structure, zero-mean assumption, normal distribution, and time scaling, their VaR estimates are expected to be similar apart from simulation error.
 
@@ -170,63 +180,61 @@ The reference run uses 10,000 simulations for both the static estimate and each 
 
 Expected Shortfall is included as a supplementary static measure of loss severity beyond the VaR threshold:
 
-```
-ES_α = -E[PnL | PnL ≤ -VaR_α]
-```
+$$
+\mathrm{ES}_{\alpha}=-\mathbb{E}\left[\mathrm{PnL}\mid\mathrm{PnL}\leq-\mathrm{VaR}_{\alpha}\right]
+$$
 
-Historical ES is calculated as the average loss among empirical observations exceeding Historical VaR. Parametric ES uses the closed-form normal-distribution expression:
+Historical ES is calculated as the average loss among observations whose losses are at or above the Historical VaR threshold. Parametric ES uses the closed-form normal-distribution expression: 
 
-```
-ES_α = V * σ_p * φ(z_α) / (1 - α) * sqrt(h)
-```
+$$
+\mathrm{ES}_{\alpha}=V\sigma_p\frac{\phi(z_{\alpha})}{1-\alpha}\sqrt{h}
+$$
 
-where `φ(z_α)` is the standard-normal probability density evaluated at `z_α`. Monte Carlo ES is calculated as the average simulated loss beyond the simulated VaR threshold.
+where $\phi(z_{\alpha})$ is the standard-normal probability density evaluated at $z_{\alpha}$. Monte Carlo ES is calculated as the average simulated loss at or above the Monte Carlo VaR threshold.
 
-ES is not subjected to rolling backtesting in the current framework and is therefore interpreted only as a complementary comparison of tail-loss magnitude.
+ES is estimated only for the full reference sample; rolling ES forecasts and ES backtesting are not implemented.
 
 #### EWMA VaR
 
 The EWMA model allows portfolio volatility to change over time by assigning greater weight to recent squared returns:
 
-```
-σ_t² = λσ_(t-1)² + (1 - λ)r_(t-1)²
-```
+$$
+\sigma_t^2=\lambda\sigma_{t-1}^2+(1-\lambda)r_{t-1}^2
+$$
 
-The reference configuration uses a decay factor of `λ = 0.94` and initializes the variance recursion using the first 60 observations. Under zero expected return and normal innovations, daily EWMA volatility is converted into five-day VaR using square-root-of-time scaling:
+The reference configuration uses a decay factor of $\lambda = 0.94$ and initializes the recursion with the sample variance of the first 60 portfolio-return observations. Under zero expected return and normal innovations, daily EWMA volatility is converted into five-day VaR using square-root-of-time scaling:
 
-```
-VaR_t(5) = V * z_α * σ_t * sqrt(5)
-```
+$$
+\mathrm{VaR}_t(5)=V z_{\alpha}\sigma_t\sqrt{5}
+$$
 
 Unlike the rolling-window models, EWMA does not repeatedly estimate model parameters from a fixed 1,000-observation window. It updates conditional variance recursively using the fixed decay factor.
 
 #### GARCH VaR
 
-The GARCH model represents conditional variance using a zero-mean GARCH(1,1) specification:
+The model fits a zero-mean GARCH(1,1) specification with normal innovations to the weighted portfolio-return series.
 
-```
-σ_t² = ω + α_GARCH * r_(t-1)² + β * σ_(t-1)²
-```
+$$
+\sigma_t^2=\omega+\alpha_{\mathrm{GARCH}}r_{t-1}^2+\beta\sigma_{t-1}^2
+$$
 
 where:
 
-```
-ω       = long-run variance component
-α_GARCH = sensitivity to recent return shocks
-β       = volatility persistence
-```
+* $\omega$ is the variance intercept.
+* $\alpha_{\mathrm{GARCH}}$ is the coefficient on the previous squared return.
+* $\beta$ is the coefficient on the previous conditional variance.
 
-The notation `α_GARCH` distinguishes the GARCH shock coefficient from the VaR confidence level `α`.
+The notation $\alpha_{\mathrm{GARCH}}$ distinguishes the GARCH shock coefficient from the VaR confidence level $\alpha$.
 
 At each forecast origin, the model is re-estimated using only the preceding 1,000 portfolio-return observations. This rolling design prevents future observations from influencing earlier forecasts.
 
-Rather than applying square-root-of-time scaling to a single daily volatility estimate, the model generates daily conditional-variance forecasts over the five-day holding period. Five-day normal VaR is calculated from the sum of those forecast variances:
+The model forecasts conditional variance for each of the five holding-period observations. VaR is then approximated using a normal quantile and the square root of the sum of those forecast variances:
 
-```
-VaR_t(5) = V * z_α * sqrt(σ̂²_(t|t-1) + σ̂²_(t+1|t-1) + ... + σ̂²_(t+4|t-1))
-```
+$$
+\mathrm{VaR}_{t}(5) = V z_{\alpha} \sqrt{\sum_{j=0}^{4}\hat{\sigma}^{2}_{t+j\mid t-1}}
+$$
 
-This preserves the GARCH model’s forecast dynamics and potential mean reversion in conditional variance over the holding period.
+This allows forecast conditional variance to vary across the holding period, including mean reversion when the fitted parameters imply a stationary variance process.
 
 #### Filtered Historical Simulation
 
@@ -234,19 +242,19 @@ Filtered Historical Simulation combines rolling GARCH volatility estimation with
 
 At each forecast origin, a zero-mean GARCH(1,1) model is fitted to the preceding 1,000 portfolio returns. Historical returns are divided by their fitted conditional volatilities to obtain standardized residuals:
 
-```
-z_t = r_t / σ_t
-```
+$$
+z_t=\frac{r_t}{\sigma_t}
+$$
 
-The model then draws shocks from the empirical distribution of these standardized residuals and propagates conditional variance recursively along simulated five-day paths. Each simulated return is generated as:
+The model independently resamples standardized residuals with replacement from the fitted window and propagates conditional variance recursively along simulated five-period paths. Each simulated return is generated as:
 
-```
-r_sim,t = σ_sim,t * z_draw,t
-```
+$$
+r_{\mathrm{sim},t}=\sigma_{\mathrm{sim},t}z_{\mathrm{draw},t}
+$$
 
 The reference run generates 2,000 paths per forecast and estimates VaR from the lower tail of the resulting simulated PnL distribution.
 
-Although a normal distribution is specified when estimating the GARCH volatility filter, the FHS scenarios themselves are generated from empirical standardized residuals. The simulated shocks can therefore retain non-normal characteristics that are excluded from the normal-innovation GARCH VaR model.
+Although normal innovations are specified when fitting the GARCH volatility filter, FHS scenarios use the empirical standardized-residual distribution. The resampled shocks can therefore reflect asymmetry and tail behavior present in the fitted residual sample that a standard-normal shock distribution does not capture.
 
 ### Backtesting Design
 
