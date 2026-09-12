@@ -260,123 +260,172 @@ Although normal innovations are specified when fitting the GARCH volatility filt
 
 #### Forecast and PnL Alignment
 
-A valid VaR backtest requires the forecast and realized loss to refer to the same holding period. At forecast origin `t`, the framework estimates five-day VaR using information available through `t-1`. Realized forward PnL is then constructed from portfolio returns observed from `t` through `t+4`:
+A valid VaR backtest requires the forecast and realized outcome to refer to the same holding period. At forecast origin $t$, the framework estimates five-period VaR using information available through $t-1$. Here, $t$ indexes return observations in the common-date-aligned dataset, and the holding period comprises five consecutive observations.
 
-```
-PnL_t(5) = V * [r_(p,t) + r_(p,t+1) + ... + r_(p,t+4)]
-```
+Realized forward portfolio PnL is calculated as:
 
-Because portfolio log returns are multiplied directly by notional, this represents a linearized monetary PnL measure. All VaR forecasts and realized PnL series are restricted to their common dates before validation statistics are calculated.
+$$
+\mathrm{PnL}_{t}(5)=V\sum_{j=0}^{4}r_{p,t+j}
+$$
 
-VaR is reported as a positive loss magnitude. A violation occurs when the realized portfolio loss exceeds the forecast:
+where $V$ is the fixed portfolio notional and $r_{p,t+j}$ is the weighted portfolio log return. Multiplying cumulative log returns directly by notional produces a linearized monetary PnL measure.
 
-```
-I_t = 1 if PnL_t(5) < -VaR_t(5)
-I_t = 0 otherwise
-```
+Forecasts and realized PnL are aligned on common forecast dates before backtesting. Each forecast is therefore compared with the outcome beginning at its forecast origin, while its estimation sample contains only earlier observations.
 
-For a correctly calibrated 99% VaR model, the expected violation probability is 1%.
+VaR is expressed as a positive loss magnitude. The violation indicator is defined as:
+
+$$
+I_t=\mathbf{1}\{\mathrm{PnL}_{t}(5)<-\mathrm{VaR}_{t}(5)\}
+$$
+
+A violation occurs when the realized loss exceeds the forecast VaR. For a correctly calibrated 99% VaR model, the expected violation probability is 1%.
 
 #### Overlapping Sample
 
-The full backtesting sample contains a forecast at each available trading date. Consecutive five-day PnL observations therefore share four daily returns. This provides the largest available sample for evaluating overall violation frequency and the time variation of VaR, but it also creates mechanical serial dependence between adjacent realized outcomes.
+The full aligned backtesting sample contains forecasts at consecutive return-observation dates. Adjacent five-period PnL observations share four returns, introducing mechanical dependence between realized outcomes and potentially between violation indicators.
 
-The full overlapping sample is used to report:
+The overlapping sample retains all aligned observations and is used to report:
 
 * VaR paths and realized PnL
-* Violation counts and violation rates
+* Violation counts and rates
 * Kupiec unconditional-coverage results
 * Rolling Basel-style traffic-light diagnostics
 
+Although violation rates remain useful descriptive measures, the standard Kupiec likelihood and chi-square calibration assume independent Bernoulli violations under the null. Overlap can invalidate this assumption. Overlapping-sample p-values are therefore reported as supplementary diagnostics, with greater emphasis placed on the non-overlapping results for statistical interpretation.
+
 #### Non-Overlapping Sample
 
-A non-overlapping sample is constructed by retaining every fifth aligned VaR and PnL observation using a fixed starting offset. The retained holding periods do not share daily returns, reducing the mechanical dependence created by overlapping five-day PnL windows.
+The framework constructs a non-overlapping sample by selecting every fifth aligned forecast–PnL pair, beginning with the first available pair (`start=0`). The retained holding periods do not share return observations.
 
-This procedure does not guarantee independent violations because dependence may remain through volatility clustering, structural changes, or model misspecification. It nevertheless provides a more appropriate sample for evaluating violation independence and joint conditional coverage.
-
-The non-overlapping sample is used to report:
+In the reference run, this reduces the sample from 3,764 overlapping observations to 753 non-overlapping observations. The non-overlapping sample is used to report:
 
 * Kupiec unconditional coverage
 * Christoffersen violation independence
 * Christoffersen conditional coverage
 
+Removing overlap eliminates the dependence caused by shared returns, but it does not guarantee independent violations. Dependence may remain because the model does not adequately capture changing volatility or other features of the return process.
+
+The smaller sample also reduces statistical power, particularly at the 1% target violation probability. Results are based on one fixed starting offset; alternative offsets may produce different violation counts and test outcomes.
+
 #### Kupiec Unconditional Coverage Test
 
-The Kupiec test evaluates whether the observed violation probability is consistent with the expected probability implied by the VaR confidence level.
+The Kupiec test evaluates whether the observed violation frequency is consistent with the probability implied by the VaR confidence level.
 
-The null hypothesis is:
+Let $n$ denote the number of backtesting observations, $x$ the number of violations, and $\hat{p}$ the observed violation rate:
 
-```
-H0: P(I_t = 1) = 1 - α
-```
+$$
+p=1-\alpha,\qquad
+x=\sum_{t=1}^{n}I_t,\qquad
+\hat{p}=\frac{x}{n}
+$$
 
-For the 99% VaR forecasts used in this project:
+where $\alpha$ is the VaR confidence level. The null hypothesis is:
 
-```
-H0: P(I_t = 1) = 0.01
-```
+$$
+H_0:\Pr(I_t=1)=p
+$$
 
-The likelihood-ratio statistic compares the expected violation probability with the observed violation rate and is asymptotically distributed as chi-square with one degree of freedom:
+For this project's 99% VaR forecasts, $p=0.01$.
 
-```
-LR_UC ~ χ²(1)
-```
+The likelihood-ratio statistic compares the likelihood under the target probability with the likelihood under the estimated violation rate:
 
-A small p-value indicates that the model produces either too many or too few violations relative to its stated confidence level.
+$$
+LR_{\mathrm{UC}}=
+2\left[
+x\ln\left(\frac{\hat{p}}{p}\right)
++
+(n-x)\ln\left(\frac{1-\hat{p}}{1-p}\right)
+\right]
+$$
+
+Boundary cases are interpreted by continuity; the implementation clips estimated probabilities slightly away from zero and one for numerical stability.
+
+Under the null hypothesis and standard independence assumptions, the likelihood-ratio statistic is asymptotically distributed as a chi-square random variable with one degree of freedom:
+
+$$
+LR_{\mathrm{UC}}\overset{a}{\sim}\chi^2_1
+$$
+
+A small p-value indicates a violation frequency inconsistent with the stated confidence level. Rejection can result from either too many violations, suggesting insufficient coverage, or too few, suggesting excessive conservatism relative to the nominal coverage target. The test does not evaluate the timing or severity of violations.
 
 #### Christoffersen Independence Test
 
-The Christoffersen independence test evaluates whether violations occur independently over time. It compares a constant violation probability with a first-order Markov alternative in which the probability of a violation depends on the preceding violation state.
+The Christoffersen independence test evaluates first-order dependence in the violation sequence. It compares an independent Bernoulli model with a first-order Markov alternative in which the probability of a violation depends on the preceding violation state.
 
-The test is constructed from four transition counts:
+Let $n_{ij}$ denote the number of transitions from state $i$ to state $j$, where zero denotes no violation and one denotes a violation:
 
-```
-n_00 = no violation followed by no violation
-n_01 = no violation followed by a violation
-n_10 = violation followed by no violation
-n_11 = violation followed by a violation
-```
+| Transition | Interpretation |
+| ---------- | -------------- |
+| $n_{00}$ | No violation followed by no violation |
+| $n_{01}$ | No violation followed by a violation |
+| $n_{10}$ | Violation followed by no violation |
+| $n_{11}$ | Violation followed by a violation |
 
-The null and alternative hypotheses can be expressed as:
+The estimated conditional violation probabilities are:
 
-```
-H0: π_01 = π_11
-H1: π_01 ≠ π_11
-```
+$$
+\hat{\pi}_{01}=\frac{n_{01}}{n_{00}+n_{01}},
+\qquad
+\hat{\pi}_{11}=\frac{n_{11}}{n_{10}+n_{11}}
+$$
 
-Under the null hypothesis, the likelihood-ratio statistic is asymptotically distributed as chi-square with one degree of freedom:
+The hypotheses are:
 
-```
-LR_IND ~ χ²(1)
-```
+$$
+H_0:\pi_{01}=\pi_{11},
+\qquad
+H_1:\pi_{01}\neq\pi_{11}
+$$
 
-Rejection indicates that violations exhibit statistically significant temporal dependence or clustering.
+The likelihood-ratio statistic compares the maximized likelihoods under the independent and Markov models:
+
+$$
+LR_{\mathrm{IND}}=
+-2\ln\left(
+\frac{\widehat{L}_{\mathrm{independent}}}
+{\widehat{L}_{\mathrm{Markov}}}
+\right)
+$$
+
+Under the null:
+
+$$
+LR_{\mathrm{IND}}\overset{a}{\sim}\chi^2_1
+$$
+
+The test is applied to the non-overlapping sample. Adjacent states therefore represent consecutive retained five-period outcomes, rather than consecutive daily forecast origins.
+
+Rejection indicates evidence of first-order dependence. In particular, a higher estimated violation probability following a violation is consistent with clustering. Failure to reject does not establish independence at all lags, and the test does not assess whether the unconditional violation probability equals 1%.
 
 #### Christoffersen Conditional Coverage Test
 
-The conditional-coverage test jointly evaluates correct violation frequency and violation independence:
+The conditional-coverage test jointly evaluates the target violation probability and first-order violation independence:
 
-```
-LR_CC = LR_UC + LR_IND
-```
+$$
+LR_{\mathrm{CC}}=LR_{\mathrm{UC}}+LR_{\mathrm{IND}}
+$$
 
-The joint null hypothesis is that the model has both correct unconditional coverage and independent violations:
+Within the first-order Markov framework, the joint null is:
 
-```
-H0: correct coverage and independent violations
-```
+$$
+H_0:\pi_{01}=\pi_{11}=p
+$$
 
-Under the joint null hypothesis, the statistic is asymptotically distributed as chi-square with two degrees of freedom:
+Under the joint null:
 
-```
-LR_CC ~ χ²(2)
-```
+$$
+LR_{\mathrm{CC}}\overset{a}{\sim}\chi^2_2
+$$
 
-A model can therefore pass the unconditional-coverage test while failing conditional coverage if its violations are clustered over time.
+Rejection indicates evidence against correct coverage, independence, or both. The component tests help identify the source of rejection.
+
+Because the joint test has two degrees of freedom, its rejection decision need not match either individual test. A component test may reject while the joint test does not reject at the same significance level.
+
+Failure to reject means that the sample provides insufficient evidence against the tested property; it does not prove that the model is correct. All three tests rely on asymptotic approximations, which require caution when violations or transition counts are sparse.
 
 #### Basel-Style Traffic-Light Diagnostic
 
-For each model, the framework counts violations within rolling 250-observation windows and assigns a diagnostic zone:
+For each model, the framework counts violations within rolling windows of 250 overlapping forecast–PnL pairs and assigns a diagnostic zone:
 
 | Zone   | Violations |
 | ------ | ---------: |
@@ -384,7 +433,13 @@ For each model, the framework counts violations within rolling 250-observation w
 | Yellow |        5–9 |
 | Red    | 10 or more |
 
-These thresholds are used as an intuitive Basel-style diagnostic rather than as a formal regulatory backtest. The project evaluates five-day overlapping VaR forecasts, whereas the regulatory traffic-light framework is conventionally associated with a different backtesting setup.
+These thresholds follow the classic Basel traffic-light framework for 99% one-day VaR backtesting over 250 daily observations.
+
+This project applies them to overlapping five-period outcomes to track changes in violation frequency across consecutive forecast dates. Diagnostics are reported only for the overlapping sample: retaining a 250-observation window under non-overlapping sampling would span 1,250 return observations and reflect a substantially longer monitoring period.
+
+Because adjacent outcomes share returns, a single market episode can generate several violations. The original statistical interpretation of the zone boundaries therefore does not carry over directly.
+
+The classifications serve as descriptive indicators for monitoring violation frequency and comparing models over time. The non-overlapping coverage and independence tests provide the primary basis for statistical assessment. Traffic-light classifications are not formal regulatory backtesting outcomes or a basis for regulatory capital adjustments.
 
 ## Results
 
