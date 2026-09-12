@@ -443,13 +443,15 @@ The classifications serve as descriptive indicators for monitoring violation fre
 
 ## Results
 
-The results are reported in four stages. Static VaR and ES compare full-sample risk estimates, while rolling backtesting evaluates forecast performance through realized violations. Overlapping and non-overlapping samples are then compared before the dynamic volatility models are examined in greater detail.
+The results are reported in four stages: full-sample static VaR and ES estimates, rolling backtesting diagnostics, overlapping versus non-overlapping comparisons, and a closer examination of the dynamic models.
 
-All monetary results are expressed using the common USD 1 million portfolio notional.
+For backtesting, the 99% VaR confidence level implies a target violation probability of 1%. This target is distinct from the significance level used to assess the statistical tests. We use 5% as the primary rejection threshold and, where relevant, indicate whether rejection also occurs at 1%. Since the null hypotheses represent desirable properties of VaR forecasts, non-rejection is a favorable diagnostic outcome, but it does not establish overall model adequacy. Test results are interpreted alongside observed violation rates, with primary statistical emphasis placed on the non-overlapping sample.
+
+All monetary results use the common USD 1 million portfolio notional. The five-period holding horizon comprises five consecutive return observations in the aligned dataset.
 
 ### Static VaR and ES Results
 
-Historical, Parametric, and Monte Carlo methods are first applied to the full return sample to compare their single full-sample estimates of five-day market risk.
+Historical, Parametric, and Monte Carlo methods are applied to the full reference sample to produce one static five-period VaR and ES estimate per model. These estimates describe full-sample risk and are separate from the rolling forecasts evaluated below.
 
 | Model       |           VaR | Expected Shortfall |
 | ----------- | ------------: | -----------------: |
@@ -459,9 +461,11 @@ Historical, Parametric, and Monte Carlo methods are first applied to the full re
 
 ![Static VaR and Expected Shortfall comparison](figures/static_var_es_comparison.png)
 
-Historical Simulation produces substantially higher VaR and ES than the two normal-based models. Its ES also lies much further above its VaR threshold, indicating that the empirical distribution contains more severe tail losses than those represented by the normal-distribution assumption.
+Historical Simulation produces substantially higher VaR and ES than the two normal-based models. Its ES also lies further above its VaR threshold. These results are consistent with more severe tail outcomes in the empirical five-period PnL distribution than those represented by the fitted zero-mean normal benchmark. The comparison does not isolate distributional shape from differences in holding-period aggregation and other modeling assumptions.
 
-Parametric and Monte Carlo estimates are very similar. Both methods use the same historical covariance structure, assume zero expected returns and multivariate normality, and apply square-root-of-time scaling. The small difference between their estimates is attributable to Monte Carlo sampling variation.
+Parametric and Monte Carlo VaR use the same estimated covariance matrix, portfolio weights, zero-mean normal return assumption, and square-root-of-time scaling. Under these assumptions, portfolio PnL is normally distributed, and Parametric VaR gives its analytical loss quantile. Monte Carlo VaR estimates the same quantile through simulation and converges to the Parametric value as the number of simulations increases, holding the model inputs fixed.
+
+In the reference run, the 10,000-simulation Monte Carlo estimate differs from Parametric VaR by approximately USD 35, or 0.087%. This close agreement reflects a small realized simulation error. It supports consistency between the two implementations, but does not independently validate their shared assumptions against actual market outcomes.
 
 The Monte Carlo convergence check produced the following estimates:
 
@@ -472,13 +476,13 @@ The Monte Carlo convergence check produced the following estimates:
 |      10,000 |   USD 40,275.23 |
 |      50,000 |   USD 40,302.34 |
 
-The estimate becomes progressively more stable as the number of simulations increases. The difference between the 10,000- and 50,000-simulation estimates is approximately USD 27, supporting the use of 10,000 simulations as a reasonable balance between numerical stability and computational cost.
+Repeated runs during development showed less variation in Monte Carlo VaR estimates as the number of simulations increased. In the reference run shown above, the estimates approach the analytical Parametric VaR benchmark of USD 40,329.81, with the 10,000- and 50,000-simulation estimates differing by approximately USD 27. Together, these observations support using 10,000 simulations as a practical balance between numerical stability and computational cost.
 
-This convergence exercise uses separate sequential simulation draws, so its 10,000-simulation estimate does not exactly equal the headline Monte Carlo VaR reported in the static comparison.
+The convergence exercise uses separate sequential simulation draws, so its 10,000-simulation estimate does not exactly equal the headline Monte Carlo VaR in the static comparison.
 
 ### Rolling Backtesting Results
 
-Rolling backtesting evaluates whether the five-day VaR forecasts are consistent with subsequently realized portfolio losses. The full sample contains 3,764 overlapping forecast observations.
+Rolling backtesting compares five-period VaR forecasts with subsequently realized portfolio PnL. All six models are evaluated over the same 3,764 overlapping forecast observations.
 
 | Model         |   Average VaR | Violations | Violation Rate | Kupiec p-value |
 | ------------- | ------------: | ---------: | -------------: | -------------: |
@@ -491,34 +495,40 @@ Rolling backtesting evaluates whether the five-day VaR forecasts are consistent 
 
 ![Rolling VaR forecasts and realized portfolio PnL](figures/rolling_var_backtests.png)
 
-A correctly calibrated 99% VaR model would be expected to produce a violation rate close to 1%. Historical VaR records 38 violations, almost exactly matching the approximately 38 violations expected over 3,764 observations. Its Kupiec p-value of 0.953 provides no evidence against correct unconditional coverage.
+The Kupiec p-values above use the standard chi-square approximation. Because adjacent five-period outcomes overlap, these p-values are supplementary diagnostics rather than the primary basis for statistical conclusions.
 
-Parametric and Monte Carlo VaR both record 83 violations. Their identical violation counts and nearly identical average VaR reflect their shared covariance structure and normal-distribution assumption. Both models materially underestimate the frequency of large portfolio losses.
+At the target violation probability of 1%, the expected number of violations is 37.64. Historical VaR records 38 violations, corresponding to a rate of 1.01%. Its nominal overlapping-sample Kupiec p-value is 0.953, although the dependence introduced by overlap limits the usual interpretation of this result.
 
-EWMA produces the lowest average VaR and the highest violation rate. Rolling GARCH improves on EWMA but still records more than three times the expected violation rate. FHS provides the strongest coverage among the volatility-based extensions, although its 1.99% violation rate remains materially above the 1% target.
+Parametric and Monte Carlo VaR each record 83 violations, or 2.21% of forecasts. Their similar estimates are consistent with their shared covariance structure and normal assumptions, although identical total violation counts do not imply identical violation dates. Both models produce thresholds exceeded substantially more often than the target 1% rate.
 
-The rolling 250-observation traffic-light diagnostics provide an additional view of model behavior over time:
+EWMA has the lowest average VaR and the highest violation rate. Rolling GARCH records fewer violations than EWMA, but its 3.48% rate remains more than three times the target. FHS has the violation rate closest to 1% among the dynamic extensions, at 1.99%.
 
-| Model         | Average Violations |  Green | Yellow |    Red |
-| ------------- | -----------------: | -----: | -----: | -----: |
-| Historical    |               2.68 | 80.96% |  9.65% |  9.39% |
-| Parametric    |               5.78 | 52.31% | 27.72% | 19.98% |
-| Monte Carlo   |               5.78 | 54.13% | 26.41% | 19.46% |
-| EWMA          |              10.92 |  4.24% | 41.41% | 54.35% |
-| Rolling GARCH |               9.00 | 18.90% | 44.99% | 36.11% |
-| FHS           |               5.26 | 49.15% | 32.50% | 18.36% |
+The rolling traffic-light diagnostics summarize violation frequency within windows of 250 overlapping forecast–PnL pairs:
+
+| Model         | Average Violations per Window |  Green | Yellow |    Red |
+| ------------- | ----------------------------: | -----: | -----: | -----: |
+| Historical    |                          2.68 | 80.96% |  9.65% |  9.39% |
+| Parametric    |                          5.78 | 52.31% | 27.72% | 19.98% |
+| Monte Carlo   |                          5.78 | 54.13% | 26.41% | 19.46% |
+| EWMA          |                         10.92 |  4.24% | 41.41% | 54.35% |
+| Rolling GARCH |                          9.00 | 18.90% | 44.99% | 36.11% |
+| FHS           |                          5.26 | 49.15% | 32.50% | 18.36% |
 
 ![Distribution of Basel-style traffic-light classifications](figures/traffic_light_distribution.png)
 
-Historical VaR remains in the green zone for approximately 81% of the rolling windows. By contrast, EWMA is classified as red in more than half of the windows. Rolling GARCH reduces the proportion of red classifications relative to EWMA, while FHS produces the most favorable traffic-light distribution among the dynamic extensions.
+The implementation produces 3,514 evaluated windows per model. Average violations are calculated across these windows, and the zone percentages represent the proportion of windows assigned to each classification.
 
-These classifications are used as descriptive Basel-style diagnostics. They should not be interpreted as the outcome of a formal regulatory backtest because the project uses overlapping five-day VaR forecasts.
+Historical VaR is classified as green in approximately 81% of windows. EWMA is classified as red in more than half of the windows. Among the dynamic extensions, FHS has the lowest average window-level violation count, the highest green proportion, and the lowest red proportion.
+
+These classifications summarize realized forecast performance retrospectively. Each diagnostic is indexed by the next forecast date after the 250 selected pairs, but the most recent five-period outcomes are not yet fully observed at that date. The labels should therefore not be interpreted as dates on which the diagnostic was available in real time.
+
+The classifications are descriptive Basel-style diagnostics. Shared returns and overlapping evaluation windows limit their statistical interpretation, and they are not formal regulatory backtesting outcomes.
 
 ### Overlapping vs. Non-Overlapping Analysis
 
-Consecutive observations in the full sample share four of their five daily returns. To reduce the resulting mechanical dependence, every fifth aligned forecast and PnL observation is retained in a separate non-overlapping sample.
+Every fifth aligned forecast–PnL pair is retained, beginning with the first pair, to construct a sample whose holding periods do not share returns. This produces 753 non-overlapping observations.
 
-The non-overlapping sample contains 753 observations.
+All p-values in the following table refer to the non-overlapping sample.
 
 | Model         | Overlapping Violation Rate | Non-Overlapping Violations | Non-Overlapping Violation Rate | Kupiec p-value | Independence p-value | Conditional Coverage p-value |
 | ------------- | -------------------------: | -------------------------: | -----------------------------: | -------------: | -------------------: | ---------------------------: |
@@ -531,35 +541,37 @@ The non-overlapping sample contains 753 observations.
 
 ![Overlapping and non-overlapping VaR violation rates across models](figures/violation_rate_comparison.png)
 
-The Historical model remains close to the expected 1% violation rate after overlapping observations are removed. Its Kupiec p-value of 0.561 does not reject correct unconditional coverage. However, its independence p-value of 0.034 indicates evidence of violation dependence at the 5% significance level. When coverage and independence are tested jointly, the conditional-coverage p-value is 0.089, which does not reject the joint null at the 5% level.
+Historical VaR records six violations, compared with an expected 7.53 at the target probability. The Kupiec test does not reject correct unconditional coverage. The independence test rejects first-order independence at 5%, but not at 1%, with a p-value of 0.034. The joint conditional-coverage test does not reject at either level, with a p-value of 0.089. These different decisions reflect the different statistics and degrees of freedom used by the component and joint tests.
 
-Parametric and Monte Carlo VaR continue to produce violation rates above 2%. Their independence tests do not reject independent violations, but their Kupiec and conditional-coverage tests are rejected. Their principal weakness in the non-overlapping sample is therefore insufficient coverage rather than statistically significant violation clustering.
+Parametric and Monte Carlo VaR each produce 17 violations, or 2.26%, slightly above their overlapping rate of 2.21%. This small change reflects the retained observations rather than a change in the forecasts themselves. Violation frequencies remain above twice the target in both samples, and the non-overlapping unconditional- and conditional-coverage nulls are rejected at both 5% and 1%. Their independence tests do not reject at either level.
 
-EWMA and Rolling GARCH also fail the unconditional- and conditional-coverage tests by wide margins. Their independence p-values exceed 5%, indicating that removal of overlapping observations substantially reduces evidence of clustering. Nevertheless, their violation rates remain too high for a 99% VaR model.
+EWMA and Rolling GARCH also reject unconditional and conditional coverage at both significance levels. Their non-overlapping violation rates decline slightly to 3.98% and 3.32%, respectively, but remain substantially above the 1% target. Their independence tests do not reject at either level, with p-values of 0.482 and 0.256.
 
-FHS records the same 1.99% violation rate in both samples. Its independence test does not reject, but its Kupiec p-value of 0.016 and conditional-coverage p-value of 0.040 remain below 5%. FHS therefore improves materially on EWMA and Rolling GARCH without fully achieving the target coverage.
+FHS has a violation rate of 1.99% in both samples after rounding. Its non-overlapping Kupiec and conditional-coverage p-values are 0.016 and 0.040. Both tests reject at the primary 5% level, but neither rejects at 1%. The rejection decisions are therefore sensitive to the chosen significance level, while the observed violation rate remains approximately twice the target. The independence test does not reject at either level.
 
-The general ranking of the models is stable across the two samples. The high violation rates of the weaker models cannot be attributed solely to mechanical dependence from overlapping five-day PnL.
+The dynamic models illustrate the distinction between coverage and independence: the tests identify violation frequencies inconsistent with the target at 5%, without detecting first-order dependence at that level. Non-rejection does not establish independence at all lags or identify the underlying modeling cause of the coverage shortfall. It also does not demonstrate that dependence decreased after removing overlap, since independence tests are not reported for the overlapping sample.
+
+The ordering of models by proximity to the target violation rate is unchanged in this selected non-overlapping sample. Elevated violation rates persist for Parametric, Monte Carlo, EWMA, GARCH, and FHS, so removing shared returns does not eliminate their observed coverage shortfalls.
+
+These conclusions remain conditional on the selected sampling offset. The reduced sample size and small number of violations also limit test power and the reliability of asymptotic approximations, particularly for independence testing.
 
 ### Dynamic Model Comparison
 
-The dynamic models are designed to determine whether time-varying volatility and alternative shock distributions improve VaR performance relative to the baseline normal models.
+The dynamic extensions examine how alternative volatility treatments and scenario-generation methods affect coverage. Average VaR and overlapping violation rates below use the full aligned sample; conditional-coverage p-values use the non-overlapping sample.
 
-| Model         | Volatility Treatment                                | Shock Distribution               |   Average VaR | Overlapping Violation Rate | Non-Overlapping Violation Rate | Conditional Coverage p-value |
-| ------------- | --------------------------------------------------- | -------------------------------- | ------------: | -------------------------: | -----------------------------: | ---------------------------: |
-| EWMA          | Recursive fixed-decay variance                      | Normal                           | USD 32,684.73 |                      4.22% |                          3.98% |                       <0.001 |
-| Rolling GARCH | Rolling GARCH(1,1) with five-day variance forecasts | Normal                           | USD 33,832.95 |                      3.48% |                          3.32% |                       <0.001 |
-| FHS           | Rolling GARCH(1,1) with simulated variance paths    | Empirical standardized residuals | USD 40,779.50 |                      1.99% |                          1.99% |                        0.040 |
+| Model         | Volatility Treatment | VaR Construction | Average VaR | Overlapping Violation Rate | Non-Overlapping Violation Rate | Conditional Coverage p-value |
+| ------------- | -------------------- | ---------------- | ----------: | -------------------------: | -----------------------------: | ---------------------------: |
+| EWMA          | Recursive fixed-decay variance | Normal quantile with square-root-of-time scaling | USD 32,684.73 | 4.22% | 3.98% | <0.001 |
+| Rolling GARCH | Rolling GARCH(1,1) variance forecasts | Normal quantile applied to aggregated forecast variance | USD 33,832.95 | 3.48% | 3.32% | <0.001 |
+| FHS           | Rolling GARCH(1,1) with pathwise variance updates | Empirical quantile of simulated cumulative PnL | USD 40,779.50 | 1.99% | 1.99% | 0.040 |
 
-EWMA responds to recent squared returns but applies a fixed decay factor and normal time scaling. Its low average VaR and high violation rate indicate that volatility updating alone does not provide adequate protection against the observed five-day tail losses.
+Time-varying volatility does not automatically improve coverage in this reference run. Rolling GARCH produces lower violation rates than EWMA, but both models remain further from the 1% target than the baseline Parametric and Monte Carlo models.
 
-Rolling GARCH provides a more flexible volatility process and generates five-day VaR from the sum of model-implied conditional-variance forecasts. It records 28 fewer violations than EWMA and a lower proportion of red traffic-light windows. Nevertheless, its violation rate remains well above the 1% target, showing that more flexible variance dynamics do not by themselves resolve the coverage problem under normal innovations.
+EWMA updates volatility using recent squared returns and applies a normal quantile with square-root-of-time scaling. Rolling GARCH instead re-estimates the volatility process and aggregates five conditional-variance forecasts before applying a normal quantile. This more flexible variance treatment produces better coverage than EWMA in the reference sample, but does not resolve the coverage shortfall.
 
-FHS uses the same rolling GARCH(1,1) volatility structure but replaces normally distributed future shocks with empirical standardized residuals. It records 75 violations, compared with 131 for Rolling GARCH and 159 for EWMA. This improvement is consistent with the empirical residual distribution retaining tail characteristics that are absent from the normal-innovation models.
+FHS achieves violation rates closest to the target among the dynamic extensions. It uses the same rolling GARCH specification for volatility-filter estimation, but resamples empirical standardized residuals and updates conditional variance along simulated paths before estimating the cumulative-PnL quantile. Its improved coverage is consistent with empirical shocks retaining tail features omitted by normal shocks. However, both the shock distribution and the multi-period VaR construction change, so the comparison does not isolate the effect of residual-distribution choice.
 
-FHS nevertheless produces approximately twice the target violation rate and marginally rejects conditional coverage at the 5% level. Empirical shock resampling improves tail-risk measurement, but it does not fully capture the most severe realized losses in the reference sample.
-
-Overall, the dynamic-model results distinguish volatility dynamics from shock-distribution assumptions. Updating conditional volatility improves responsiveness, but the assumed shape of the standardized shock distribution remains an important determinant of VaR coverage. Historical Simulation provides the strongest overall calibration in this reference run, while FHS performs best among the volatility-based extensions.
+Despite this improvement, FHS still produces approximately twice the target violation rate. Its relative advantage in coverage therefore does not establish full calibration or general superiority across portfolios and market regimes.
 
 ## Repository Structure
 
