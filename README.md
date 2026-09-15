@@ -623,13 +623,13 @@ The snapshot preserves a fixed dataset for reproducibility while the data-loadin
 
 The [`results/reference_run`](results/reference_run) directory contains the reproducible outputs used throughout the README:
 
-| File                          | Description                                                                                                      |
-| ----------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| File                          | Description                                                                                           |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------|
 | `run_config.json`             | Reference-run identifier, portfolio settings, model parameters, data range, and selected environment information |
-| `static_var_es_summary.csv`   | Static Historical, Parametric, and Monte Carlo VaR and ES estimates                                              |
-| `monte_carlo_convergence.csv` | Monte Carlo VaR estimates across different simulation counts                                                     |
-| `rolling_var_forecasts.csv`   | Realized forward PnL and aligned rolling VaR forecasts for all models                                            |
-| `backtesting_summary.csv`     | Violation rates, likelihood-ratio tests, p-values, and traffic-light results                                     |
+| `static_var_es_summary.csv`   | Static Historical, Parametric, and Monte Carlo VaR and ES estimates |
+| `monte_carlo_convergence.csv` | Monte Carlo VaR estimates across different simulation counts |
+| `rolling_var_forecasts.csv`   | Realized forward PnL and aligned rolling VaR forecasts for all models |
+| `backtesting_summary.csv`     | Violation rates, likelihood-ratio tests, p-values, and traffic-light results |
 
 ### Figures
 
@@ -637,7 +637,7 @@ The [`figures`](figures) directory contains the visual summaries generated from 
 
 ## How to Run
 
-Clone the repository and install the required packages:
+With Python and Git installed, clone the repository and install the required packages:
 
 ```bash
 git clone https://github.com/ByCraftsman/market-risk-validation-framework.git
@@ -653,11 +653,13 @@ python Market_Risk_Framework.py
 
 When the saved price snapshot is available, the script uses it to reproduce the reference run. If the snapshot is unavailable, market data are downloaded through Yahoo Finance and saved locally.
 
-After the result tables have been generated, create the figures with:
+To generate figures from the saved result tables, run:
 
 ```bash
 python visualize_results.py
 ```
+
+The repository already includes the reference result tables, so this command can be run without rerunning the main estimation pipeline.
 
 Outputs are written to:
 
@@ -666,108 +668,122 @@ results/reference_run/
 figures/
 ```
 
-Rolling GARCH and FHS are re-estimated at each forecast origin, so the main framework may require substantial execution time.
+Rerunning the scripts overwrites the corresponding result files and figures.
+
+Rolling GARCH and FHS are re-estimated at each forecast origin. A full run takes approximately 20–30 minutes on the author's laptop, though execution time varies with hardware and software environment.
 
 ## Modeling Assumptions and Limitations
 
-The framework is designed as a transparent methodological comparison rather than a production trading-desk risk system. Its results should therefore be interpreted within the following assumptions and limitations.
+The framework provides a methodological comparison of VaR models for a simplified portfolio. Its results should be interpreted within the following assumptions and limitations.
 
 ### Portfolio Construction
 
-* The portfolio contains four broad market exposures with constant weights of 25%.
-* Applying the same weights to each day’s returns corresponds to an implicitly rebalanced constant-mix portfolio rather than a buy-and-hold allocation.
+* The portfolio contains four broad market exposures with fixed weights of 25%.
+* Applying fixed weights to asset log returns approximates a rebalanced constant-mix portfolio. It does not reproduce the exact return of either a rebalanced portfolio or a buy-and-hold allocation.
 * Transaction costs, taxes, bid-ask spreads, funding costs, and rebalancing costs are excluded.
-* The portfolio does not contain derivatives, options, short positions, nonlinear payoffs, or position-level risk-factor mappings.
 
 ### Return and PnL Measurement
 
-* Portfolio returns are constructed from daily log returns.
-* Five-day PnL is approximated by multiplying cumulative log return by portfolio notional.
-* This is a linearized monetary PnL measure rather than an exact mark-to-market change calculated from compounded portfolio value.
-* The approximation is generally small for ordinary returns but can become more noticeable during extreme market movements.
+* Portfolio returns are approximated by the weighted average of asset log returns. This differs from the exact log return of a portfolio formed from weighted asset simple returns.
+* Holding-period PnL is calculated by summing five consecutive weighted log-return observations and multiplying by the fixed portfolio notional.
+* These calculations introduce both a portfolio-return aggregation approximation and a linear approximation when converting returns into monetary PnL.
+* Approximation errors can become more material when returns are large or component returns differ substantially.
+* The portfolio notional remains fixed throughout the analysis; the framework does not track a compounded wealth process or changes in position size.
 
 ### Price-Series Conventions
 
-* IEF returns are calculated from Adjusted Close and therefore reflect distributions and other price adjustments.
-* KOSPI, Kosdaq, and S&P 500 returns are calculated from unadjusted closing index levels and exclude dividends.
-* The portfolio therefore combines a distribution-adjusted ETF return series with price-index return series.
-* This difference is retained for simplicity but prevents the component returns from representing a fully harmonized total-return portfolio.
+* IEF returns are calculated from Adjusted Close and reflect distributions and other price adjustments.
+* KOSPI, KOSDAQ, and S&P 500 returns are calculated from closing price-index levels and exclude dividends.
+* The portfolio therefore combines a distribution-adjusted ETF return series with price-index return series, rather than fully harmonized total-return data.
+* The saved Yahoo Finance snapshot fixes the input dataset for repeatability but does not independently validate the underlying market data or preserve a historical record of what the data provider published at each forecast date.
 
 ### Cross-Market Alignment
 
-* Korean and US market series are restricted to their common available dates.
-* Because the markets operate in different time zones and observe different holidays, matching date labels do not necessarily represent perfectly synchronous closing times or identical return intervals.
-* Common-date alignment removes missing observations but does not eliminate potential nonsynchronous-trading effects.
+* Korean and US price series are restricted to their common available dates before returns are calculated.
+* Each return observation spans consecutive dates in this aligned dataset. When a date is excluded because one market is closed, the resulting interval may contain multiple trading sessions in another market.
+* The holding period therefore comprises five consecutive aligned return observations, which need not correspond to exactly five trading sessions in each market.
+* Matching date labels does not synchronize Korean and US closing times.
 
 ### Currency Treatment
 
-* KOSPI and Kosdaq returns are evaluated in local-currency terms.
-* The USD 1 million amount is used as a common notional for converting modeled returns into monetary VaR and PnL.
+* Korean index returns are evaluated in local-currency terms.
+* The USD 1 million amount serves as a common notional for expressing modeled returns as monetary VaR and PnL.
 * Exchange-rate movements, currency hedging, and hedging costs are not modeled.
-* The results therefore represent an FX-neutral methodological benchmark rather than the realized risk of an unhedged USD investor.
+* Results represent an FX-neutral methodological benchmark and should not be interpreted as the realized risk of an unhedged USD investor.
 
 ### Distributional and Volatility Assumptions
 
-* Parametric and Monte Carlo VaR assume zero expected returns, multivariate normality, and a stable covariance structure within each estimation window.
-* Parametric, Monte Carlo, and EWMA VaR use square-root-of-time scaling over the five-day holding period.
-* EWMA uses a fixed decay factor rather than an estimated mean-reverting volatility process.
-* Rolling GARCH assumes a zero conditional mean and normally distributed innovations but aggregates model-implied daily variance forecasts over the holding period.
-* FHS replaces normally distributed simulated shocks with empirical standardized residuals, but it still assumes that the fitted GARCH dynamics and historical residual distribution remain relevant for the forecast period.
-* Historical Simulation is non-parametric, but its estimates are sensitive to the selected historical window and to the extreme observations contained within that window.
+* Parametric and Monte Carlo VaR use zero expected returns, a multivariate normal distribution, and a covariance matrix estimated from the selected sample and held fixed over each forecast horizon. Their close agreement reflects shared assumptions rather than independent confirmation of model adequacy.
+* Parametric, Monte Carlo, and EWMA VaR use square-root-of-time scaling. This treatment does not explicitly model serial return covariance or simulate changing volatility within the holding period.
+* EWMA uses a fixed decay factor and updates variance recursively. It does not estimate a long-run variance level or a mean-reversion parameter.
+* Rolling GARCH fits a zero-mean GARCH(1,1) model with normal innovations. Five-period VaR is approximated by applying a normal quantile to the square root of aggregated conditional-variance forecasts. Normal one-period innovations do not imply an exactly normal cumulative return distribution over multiple periods.
+* The GARCH specification responds symmetrically to positive and negative shocks of equal magnitude and does not include an explicit leverage-effect term.
+* FHS uses a normally specified GARCH model for volatility-filter estimation, but future shocks are drawn independently with replacement from the empirical standardized residuals. This assumes that the fitted dynamics and residual distribution remain relevant and does not preserve any remaining serial dependence in the residuals.
+* FHS residuals are not explicitly recentered or rescaled to enforce a sample mean of zero and variance of one. The zero-mean filter specification therefore does not guarantee an exactly zero-mean empirical simulation distribution.
+* Empirical resampling restricts standardized shocks to those observed in the estimation window. Simulated monetary losses can nevertheless exceed historical losses because conditional variance evolves along each path.
+* Historical Simulation is sensitive to the selected sample and its extreme observations. Its empirical quantile does not explicitly extrapolate beyond the observed loss distribution.
 
 ### Estimation-Window Interpretation
 
-* Rolling Historical VaR uses the preceding 1,000 overlapping five-day PnL observations.
-* Rolling Parametric, Monte Carlo, GARCH, and FHS models use the preceding 1,000 daily return observations.
-* EWMA is initialized from 60 observations and subsequently updated recursively rather than estimated from a rolling 1,000-observation window.
-* The common window label therefore does not imply that every model uses an identical underlying statistical sample.
+* Rolling Historical VaR uses the preceding 1,000 overlapping five-period PnL observations, spanning 1,004 underlying return observations.
+* Rolling Parametric, Monte Carlo, GARCH, and FHS models use the preceding 1,000 return observations.
+* EWMA is initialized from 60 observations and then updated recursively, rather than re-estimated from a rolling 1,000-observation window.
+* Identical window labels therefore do not imply identical statistical samples or effective sample sizes.
+* Estimation-window lengths and other settings are fixed for the reference comparison. Results do not establish robustness to alternative parameter choices.
 
 ### Backtesting Limitations
 
-* Consecutive five-day PnL observations in the full sample overlap and share four daily returns.
-* Sampling every fifth observation reduces this mechanical dependence but does not guarantee independent violations.
-* The non-overlapping analysis uses one fixed starting offset. Alternative offsets could produce somewhat different violation counts and test results.
-* Reducing the sample from 3,764 to 753 observations also reduces statistical power.
-* Kupiec and Christoffersen tests rely on asymptotic chi-square approximations, which should be interpreted cautiously when the number of violations is small.
-* The Basel traffic-light thresholds are used as an intuitive diagnostic and not as a formal regulatory backtest of the five-day models.
+* Consecutive five-period PnL observations overlap and share four returns. Standard Kupiec p-values from this sample are supplementary diagnostics because the usual independent-Bernoulli calibration may not apply.
+* Selecting every fifth observation removes shared returns between retained holding periods, but does not guarantee independent violations.
+* The non-overlapping analysis uses one fixed starting offset. Other offsets may produce different violation counts and test outcomes.
+* Reducing the sample from 3,764 to 753 observations reduces statistical power. At a target violation probability of 1%, the expected non-overlapping violation count is only 7.53.
+* Kupiec and Christoffersen tests use asymptotic chi-square approximations, which can be unreliable when violations or transition counts are sparse.
+* The independence test evaluates first-order dependence. Non-rejection does not establish independence at all lags.
+* Coverage and independence tests evaluate violation frequency and ordering, not the magnitude of losses beyond VaR. ES is estimated only for the full sample; rolling ES forecasts and ES backtesting are not implemented.
+* Traffic-light classifications use Basel-style thresholds as descriptive indicators for overlapping five-period outcomes. They are not formal regulatory backtesting results. Traffic-light results are calculated retrospectively.
 
 ### Simulation and Reproducibility
 
-* Monte Carlo and FHS estimates contain simulation error.
-* A fixed random seed improves reproducibility within the reference pipeline, but numerical results can still vary across library versions, optimization routines, and computing environments.
-* The saved snapshot and reference configuration improve repeatability but do not constitute a fully controlled production model environment.
+* Monte Carlo and FHS estimates contain simulation error, including uncertainty in the estimated tail quantiles. Increasing simulation counts reduces sampling variability but does not correct model misspecification.
+* FHS simulations use fitted GARCH parameters without separately simulating parameter-estimation uncertainty.
+* A fixed global random seed supports reproducibility for the same execution sequence. Changing earlier random draws or their order can change subsequent Monte Carlo and FHS outputs.
+* Numerical results may vary across package versions, optimization routines, and computing environments. Dependencies are not version-pinned.
+* The implementation does not systematically record or enforce an acceptance rule for every rolling GARCH optimizer's convergence status. Numerical convergence and residual adequacy are not established by the backtesting results alone.
+* The saved snapshot, result tables, and run configuration support repeatability but do not constitute a fully controlled production environment.
 
 ### Interpretation of Model Rankings
 
-The reported rankings are specific to the selected portfolio, sample period, confidence level, holding period, estimation windows, and modeling assumptions. Historical VaR’s strong performance in this reference run should not be interpreted as evidence that it will dominate other methodologies across different portfolios or market regimes.
+Model comparisons are specific to the selected portfolio, sample period, confidence level, holding period, estimation windows, and modeling assumptions. Rankings describe proximity to the target violation rate and the reported diagnostics; they do not establish overall model superiority or performance across other portfolios and market regimes.
 
-Similarly, failure to reject a backtesting null hypothesis does not prove that a model is correct. It indicates only that the available sample does not provide sufficient statistical evidence against the tested property.
+The comparisons also change more than one modeling feature at a time. In particular, GARCH and FHS differ in both the shock distribution used for forecasting and the construction of multi-period VaR. Their performance difference cannot be attributed solely to residual-distribution choice.
+
+Failure to reject a backtesting null hypothesis indicates insufficient evidence against the tested property. It does not prove model correctness, and a higher p-value does not by itself imply a better model.
 
 ## Project Evolution
 
-The framework was developed incrementally from a static risk-measurement exercise into a broader model-validation project.
+Development began in January 2026 with implementations of Historical, Parametric, and Monte Carlo VaR for a common portfolio. As the project expanded, the focus shifted from calculating risk estimates to examining whether forecasts were constructed and evaluated consistently.
 
-| Stage                             | Development                                                                                                   |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| 1. Static risk measurement        | Implemented Historical, Parametric, and Monte Carlo VaR for a common multi-asset portfolio                    |
-| 2. Tail-risk comparison           | Added Expected Shortfall and Monte Carlo convergence analysis                                                 |
-| 3. Rolling validation             | Introduced rolling VaR forecasts and forward-looking five-day PnL alignment                                   |
-| 4. Statistical backtesting        | Added Kupiec unconditional coverage, Christoffersen independence, and conditional-coverage tests              |
-| 5. Dependence-aware analysis      | Separated overlapping and non-overlapping backtesting samples                                                 |
-| 6. Dynamic volatility models      | Added EWMA, Rolling GARCH(1,1), and Filtered Historical Simulation                                            |
-| 7. Forecast-integrity improvement | Replaced full-sample GARCH filtering with rolling estimation and multi-period conditional-variance forecasts  |
-| 8. Reproducible reporting         | Added a saved data snapshot, reference configuration, consolidated CSV outputs, and standalone visualizations |
+The framework evolved through successive questions about estimation, forecast timing, and backtesting. The stages below summarize this development by the methodological issue addressed.
 
-This progression reflects the project’s central objective: moving beyond the calculation of a single VaR number toward a framework that examines model assumptions, forecast alignment, statistical coverage, violation dependence, and the interpretation of model failure.
+| Stage | Question or Limitation Identified | Development |
+| ----- | -------------------------------- | ----------- |
+| Static risk measurement | How can three standard VaR methods be implemented for a common portfolio? | Implemented Historical, Parametric, and Monte Carlo VaR, then added static ES and Monte Carlo convergence checks. |
+| Backtesting diagnostics | How can forecast performance be assessed beyond comparing VaR values? | Added violation counts and rates, Kupiec coverage, Christoffersen independence and conditional coverage, and Basel-style traffic-light diagnostics. |
+| Rolling forecast construction | Full-sample estimates describe historical risk but cannot represent forecasts made using only information available at each past date. | Constructed rolling VaR series using observations preceding each forecast origin. |
+| Forecast–outcome alignment | A multi-period forecast must be matched to the subsequent outcome over the same holding period. | Constructed forward five-period PnL and aligned it with the corresponding VaR forecasts. |
+| Overlapping outcomes | Adjacent five-period outcomes share returns, complicating statistical interpretation. | Added non-overlapping samples and distinguished descriptive overlapping diagnostics from the primary statistical assessment. |
+| Dynamic volatility extensions | Do changing volatility estimates and empirical shock distributions improve coverage? | Added EWMA, rolling GARCH(1,1), and FHS for comparison with the baseline models. |
+| Dynamic forecast refinement | Dynamic models also require estimation and filtering that respect the information available at each forecast origin. | Replaced full-sample GARCH filtering with rolling estimation and implemented multi-period variance forecasts and FHS simulation paths. |
+| Reproducible reporting | How can the analysis be inspected and repeated without relying on transient console output? | Added a saved price snapshot, fixed random seed, run metadata, consolidated result tables, and a separate visualization script. |
 
-Potential extensions include:
+This development process made forecast construction and validation central to the project. Each extension addressed a specific limitation, while the comparisons showed that **greater model complexity did not necessarily produce better coverage in the reference sample.**
+
+The following extensions are possible but fall outside the scope of this project and are not planned as part of its completion:
 
 * Student-t or skewed-Student GARCH innovations
-* Rolling Expected Shortfall backtesting
-* Alternative non-overlapping sampling offsets
-* Explicit FX conversion and currency-risk modeling
-* Fully harmonized total-return data
+* Rolling Expected Shortfall estimation and backtesting
+* Sensitivity analysis across estimation windows and non-overlapping sampling offsets
+* Explicit FX conversion and harmonized total-return data
 * Additional portfolio and stress-period comparisons
-* Modular configuration files and automated tests
-
-
+* Systematic optimizer-convergence checks and residual diagnostics
+* Modular configuration and automated checks for forecast–PnL alignment
